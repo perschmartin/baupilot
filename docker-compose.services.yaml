@@ -1,0 +1,70 @@
+# BauPilot — Anwendungsdienste
+# Verwendung: docker compose -f docker-compose.services.yaml up -d
+# Voraussetzung: docker compose up -d (Infrastruktur laeuft)
+
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: baupilot-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8110}:8000"
+    environment:
+      POSTGRES_HOST: baupilot-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-baupilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-baupilot_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-baupilot}
+      QDRANT_HOST: baupilot-qdrant
+      QDRANT_HTTP_PORT: 6333
+      MINIO_HOST: baupilot-minio
+      MINIO_API_PORT: 9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-baupilot}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-baupilot_dev}
+      LITELLM_HOST: baupilot-litellm
+      LITELLM_PORT: 4000
+      OLLAMA_HOST: ${OLLAMA_HOST:-host.docker.internal}
+      OLLAMA_PORT: ${OLLAMA_PORT:-11434}
+      API_SECRET_KEY: ${API_SECRET_KEY:-dev_secret_change_me}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      JWT_SECRET: ${JWT_SECRET:-dev_jwt_secret_change_me}
+      TOTP_KEY: ${TOTP_KEY:-dev_totp_key_change_me_needs_64_hex_chars_0123456789abcdef}
+    networks:
+      - baupilot
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: baupilot-litellm
+    restart: unless-stopped
+    ports:
+      - "${LITELLM_PORT:-4002}:4000"
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml"]
+    environment:
+      OLLAMA_API_BASE: "http://${OLLAMA_HOST:-host.docker.internal}:${OLLAMA_PORT:-11434}"
+    networks:
+      - baupilot
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: baupilot-frontend
+    restart: unless-stopped
+    ports:
+      - "8091:80"
+    networks:
+      - baupilot
+    depends_on:
+      - api
+networks:
+  baupilot:
+    external: true
