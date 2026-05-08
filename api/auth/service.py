@@ -119,6 +119,12 @@ class AuthService:
                 {"h": hash_passwort(passwort), "id": row["id"]})
 
         mandant_slug = self._ermittle_mandant(row["id"])
+        # --- DEV-BYPASS: TOTP ueberspringen wenn BAUPILOT_DEV_SKIP_TOTP=1 ---
+        import os as _os
+        if _os.environ.get("BAUPILOT_DEV_SKIP_TOTP") == "1" and row["email"] == "admin@baupilot.de":
+            self.db.execute(text("UPDATE shared.benutzer SET fehlversuche = 0, gesperrt_bis = NULL WHERE id = :id"), {"id": row["id"]})
+            self.db.commit()
+            return self._login_erfolg(row, mandant_slug, ip_adresse, user_agent)
 
         # --- TOTP NICHT EINGERICHTET → Eingeschraenktes Token ---
         if not row["totp_aktiviert"]:
@@ -177,6 +183,12 @@ class AuthService:
             raise AuthError("Interner Fehler bei der 2FA-Verifikation.", 500)
 
         mandant_slug = self._ermittle_mandant(row["id"])
+        # --- DEV-BYPASS: TOTP ueberspringen wenn BAUPILOT_DEV_SKIP_TOTP=1 ---
+        import os as _os
+        if _os.environ.get("BAUPILOT_DEV_SKIP_TOTP") == "1" and row["email"] == "admin@baupilot.de":
+            self.db.execute(text("UPDATE shared.benutzer SET fehlversuche = 0, gesperrt_bis = NULL WHERE id = :id"), {"id": row["id"]})
+            self.db.commit()
+            return self._login_erfolg(row, mandant_slug, ip_adresse, user_agent)
 
         # TOTP pruefen
         if verifiziere_totp(klartext, code):
@@ -364,6 +376,12 @@ class AuthService:
             {"now": now, "id": db_token["id"]})
 
         mandant_slug = self._ermittle_mandant(row["id"])
+        # --- DEV-BYPASS: TOTP ueberspringen wenn BAUPILOT_DEV_SKIP_TOTP=1 ---
+        import os as _os
+        if _os.environ.get("BAUPILOT_DEV_SKIP_TOTP") == "1" and row["email"] == "admin@baupilot.de":
+            self.db.execute(text("UPDATE shared.benutzer SET fehlversuche = 0, gesperrt_bis = NULL WHERE id = :id"), {"id": row["id"]})
+            self.db.commit()
+            return self._login_erfolg(row, mandant_slug, ip_adresse, user_agent)
         neuer_refresh = erstelle_refresh_token()
         self.db.execute(
             text("INSERT INTO shared.refresh_tokens (benutzer_id, token_hash, ablauf, user_agent, ip_adresse) "
@@ -556,6 +574,8 @@ class AuthService:
         return {
             "sub": str(row["id"]),
             "email": row["email"],
+            "vorname": row.get("vorname", "") if hasattr(row, "get") else row["vorname"],
+            "nachname": row.get("nachname", "") if hasattr(row, "get") else row["nachname"],
             "mandant_slug": mandant_slug or "",
             "totp_pending": totp_pending,
             "totp_setup_required": totp_setup_required,

@@ -29,6 +29,7 @@ services:
       OLLAMA_PORT: ${OLLAMA_PORT:-11434}
       API_SECRET_KEY: ${API_SECRET_KEY:-dev_secret_change_me}
       ENVIRONMENT: ${ENVIRONMENT:-development}
+      BAUPILOT_DEV_SKIP_TOTP: "1"
       JWT_SECRET: ${JWT_SECRET:-dev_jwt_secret_change_me}
       TOTP_KEY: ${TOTP_KEY:-dev_totp_key_change_me_needs_64_hex_chars_0123456789abcdef}
     networks:
