@@ -134,7 +134,7 @@ function AuthProvider({ children }) {
 
 function Logo({ size = 'lg' }) {
   const w = size === 'lg' ? '280px' : '140px'
-  return h('img', { src: BP_LOGO, style: { width: w, maxWidth: '100%' }, alt: 'BauPilot' })
+  return h('img', { src: BP_LOGO, style: { width: w, maxWidth: '100%', display: 'block', margin: '0 auto' }, alt: 'BauPilot' })
 }
 
 function Card({ children, className = '' }) {
@@ -869,10 +869,51 @@ function LVSeite() {
 }
 
 // ================================================================
-// NACHTRAGS-DETAIL mit Stepper (AP 2.1)
+// NACHTRAGS-DETAIL mit Stepper + Tabs (AP 2.1 — Mockup-Design)
 // ================================================================
 
 const SCHRITT_LABELS = ['Erfassung', 'LV-Abgleich', 'Kostenabgleich', 'Entscheidungsvorlage', 'Pr\u00FCfung PL', 'Entscheidung', 'Abschluss']
+const SCHRITT_TAB_MAP = { 2: 'lv', 3: 'kosten', 4: 'vorlage', 6: 'entscheidung' }
+
+function EUR(val) {
+  if (val == null || val === '' || isNaN(Number(val))) return '\u2014'
+  return Number(val).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
+}
+
+function parseVorlageAbschnitte(text) {
+  if (!text) return null
+  const abschnitte = { sachverhalt: '', pruefergebnis: '', einschaetzung: '' }
+  const markers = [
+    { key: 'sachverhalt', re: /SACHVERHALT[:\s]*/i },
+    { key: 'pruefergebnis', re: /PR(?:\u00DC|UE)FERGEBNIS[:\s]*/i },
+    { key: 'einschaetzung', re: /BAUPILOT[- ]EINSCH(?:\u00C4|AE)TZUNG[:\s]*/i },
+  ]
+  let rest = text
+  // Try to split by markers
+  const positions = markers.map(m => {
+    const match = rest.match(m.re)
+    return match ? { key: m.key, idx: rest.indexOf(match[0]), len: match[0].length } : null
+  }).filter(Boolean).sort((a, b) => a.idx - b.idx)
+
+  if (positions.length >= 2) {
+    for (let i = 0; i < positions.length; i++) {
+      const start = positions[i].idx + positions[i].len
+      const end = i + 1 < positions.length ? positions[i + 1].idx : rest.length
+      abschnitte[positions[i].key] = rest.substring(start, end).trim()
+    }
+    return abschnitte
+  }
+  // Fallback: try paragraph split
+  const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim())
+  if (paragraphs.length >= 3) {
+    abschnitte.sachverhalt = paragraphs[0].trim()
+    abschnitte.pruefergebnis = paragraphs[1].trim()
+    abschnitte.einschaetzung = paragraphs.slice(2).join('\n\n').trim()
+  } else {
+    abschnitte.sachverhalt = text
+  }
+  return abschnitte
+}
 
 function NachtragDetail({ id, onBack }) {
   const { token } = useAuth()
@@ -880,6 +921,9 @@ function NachtragDetail({ id, onBack }) {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
+  const [activeTab, setActiveTab] = useState('vorlage')
+  const [vorlagen, setVorlagen] = useState([])
+  const [schrittKommentar, setSchrittKommentar] = useState('')
 
   const laden = useCallback(async () => {
     setLoading(true)
@@ -892,30 +936,80 @@ function NachtragDetail({ id, onBack }) {
 
   useEffect(() => { laden() }, [laden])
 
+  // Vorlagen laden wenn NT da
+  useEffect(() => {
+    if (!nt) return
+    bpApi(`/nachtraege/${id}/vorlagen`, { token })
+      .then(r => setVorlagen(r.vorlagen || []))
+      .catch(() => {})
+  }, [nt, token, id])
+
   const lvAbgleich = async () => {
     setActionLoading(true)
-    try { await bpApi(`/nachtraege/${id}/lv-abgleich`, { method: 'POST', token }); laden() }
+    try { await bpApi(`/nachtraege/${id}/lv-abgleich`, { method: 'POST', token }); await laden(); setActiveTab('lv') }
     catch (e) { setErr(e.detail || 'Fehler') }
     setActionLoading(false)
   }
 
   const kostenAbgleich = async () => {
     setActionLoading(true)
-    try { await bpApi(`/nachtraege/${id}/kostenabgleich`, { method: 'POST', token }); laden() }
+    try { await bpApi(`/nachtraege/${id}/kostenabgleich`, { method: 'POST', token }); await laden(); setActiveTab('kosten') }
     catch (e) { setErr(e.detail || 'Fehler') }
     setActionLoading(false)
   }
 
   const vorlageGenerieren = async () => {
     setActionLoading(true)
-    try { await bpApi(`/nachtraege/${id}/entscheidungsvorlage`, { method: 'POST', token }); laden() }
+    try {
+      await bpApi(`/nachtraege/${id}/entscheidungsvorlage`, { method: 'POST', token })
+      await laden()
+      // Vorlagen neu laden
+      const r = await bpApi(`/nachtraege/${id}/vorlagen`, { token })
+      setVorlagen(r.vorlagen || [])
+      setActiveTab('vorlage')
+    }
     catch (e) { setErr(e.detail || 'Fehler') }
     setActionLoading(false)
   }
 
   const kiBestaetigen = async (schritt, bestaetigt) => {
     setActionLoading(true)
-    try { await bpApi(`/nachtraege/${id}/ki-bestaetigung/${schritt}`, { method: 'POST', body: { bestaetigt }, token }); laden() }
+    try { await bpApi(`/nachtraege/${id}/ki-bestaetigung/${schritt}`, { method: 'POST', body: { bestaetigt }, token }); await laden() }
+    catch (e) { setErr(e.detail || 'Fehler') }
+    setActionLoading(false)
+  }
+
+  const vorlageFreigeben = async (vorlageId) => {
+    setActionLoading(true)
+    try {
+      await bpApi(`/nachtraege/vorlagen/${vorlageId}/freigeben`, { method: 'POST', body: {}, token })
+      const r = await bpApi(`/nachtraege/${id}/vorlagen`, { token })
+      setVorlagen(r.vorlagen || [])
+    }
+    catch (e) { setErr(e.detail || 'Fehler') }
+    setActionLoading(false)
+  }
+
+  const entscheidungTreffen = async (variante) => {
+    setActionLoading(true)
+    try {
+      let url = `/nachtraege/${id}/entscheidung?variante=${variante}`
+      if (variante === 'A' && nt.betrag_gefordert) url += `&betrag_genehmigt=${nt.betrag_gefordert}`
+      await bpApi(url, { method: 'POST', token })
+      await laden()
+    }
+    catch (e) { setErr(e.detail || 'Fehler bei Entscheidung') }
+    setActionLoading(false)
+  }
+
+  const schrittAbschliessen = async (nr, ergebnis) => {
+    if (!ergebnis || !ergebnis.trim()) { setErr('Bitte Ergebnis eingeben.'); return }
+    setActionLoading(true)
+    try {
+      await bpApi(`/nachtraege/${id}/schritt/${nr}`, { method: 'POST', body: { ergebnis: ergebnis.trim() }, token })
+      setSchrittKommentar('')
+      await laden()
+    }
     catch (e) { setErr(e.detail || 'Fehler') }
     setActionLoading(false)
   }
@@ -926,75 +1020,342 @@ function NachtragDetail({ id, onBack }) {
   const schritte = nt.pruefschritte || []
   const schrittMap = {}
   schritte.forEach(s => { schrittMap[s.schritt] = s })
+  const aktuell = (nt.aktueller_schritt || 0) + 1
+
+  // KI-Ergebnisse aus Pruefschritten extrahieren
+  const lvDaten = schrittMap[2] && schrittMap[2].ki_ergebnis ? schrittMap[2].ki_ergebnis : null
+  const kostenDaten = schrittMap[3] && schrittMap[3].ki_ergebnis ? schrittMap[3].ki_ergebnis : null
+  const aktuelleVorlage = vorlagen.length > 0 ? vorlagen[0] : null
+
+  // Badge-Styles
+  const badge = (text, color) => {
+    const colors = {
+      green: 'bg-green-900/30 text-green-300 border border-green-800/30',
+      amber: 'bg-amber-900/20 text-amber-400 border border-amber-700/30',
+      red: 'bg-red-900/30 text-red-300 border border-red-800/30',
+      blue: 'bg-blue-900/30 text-blue-300 border border-blue-800/30',
+      muted: 'bg-white/5 text-gray-400 border border-white/10',
+    }
+    return h('span', { className: `px-2.5 py-1 rounded-md text-xs font-semibold tracking-wide ${colors[color] || colors.muted}` }, text)
+  }
 
   return h('div', { className: 'fade-in' },
-    h('button', { className: 'bp-btn-outline px-3 py-1.5 rounded-lg text-xs mb-4', onClick: onBack }, '\u2190 Zur\u00FCck'),
+    // Breadcrumb Header
+    h('div', { className: 'bg-bp-card border-b border-white/5 -mx-6 -mt-6 px-6 py-4 mb-6 flex items-center justify-between' },
+      h('div', { className: 'flex items-center gap-3' },
+        h('button', { className: 'bp-btn-outline px-3 py-1.5 rounded-lg text-xs', onClick: onBack }, '\u2190 Zur\u00FCck'),
+        h('span', { className: 'text-gray-500 text-sm' }, '/ Nachtr\u00E4ge / '),
+        h('span', { className: 'font-mono text-bp-400 text-sm font-semibold' }, nt.nummer),
+      ),
+      badge(`In Pr\u00FCfung \u2014 Schritt ${aktuell}/7`, aktuell <= 4 ? 'amber' : aktuell <= 6 ? 'blue' : 'green'),
+    ),
     err && h(Alert, { type: 'error' }, err),
-    // Header
-    h('div', { className: 'bg-bp-card border border-white/10 rounded-xl p-6 mb-6' },
+
+    // Header-Karte mit Dreiklang
+    h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-7 mb-5' },
       h('div', { className: 'flex justify-between items-start' },
         h('div', null,
           h('div', { className: 'flex items-center gap-3 mb-2' },
-            h('span', { className: 'font-mono text-bp-400 text-lg' }, nt.nummer),
-            nt.nachtragsvariante && h('span', { className: 'text-xs px-2 py-1 rounded bg-bp-400/20 text-bp-400 font-medium' }, `Variante ${nt.nachtragsvariante}`),
+            h('span', { className: 'font-mono text-bp-400 text-xl font-bold' }, nt.nummer),
+            nt.kostengruppe_din276 && badge(`KG ${nt.kostengruppe_din276}`, 'blue'),
+            nt.nachtragsvariante && badge(`Variante ${nt.nachtragsvariante}`, nt.nachtragsvariante === 'A' ? 'green' : nt.nachtragsvariante === 'C' ? 'red' : 'amber'),
           ),
           h('h2', { className: 'text-white font-semibold text-lg' }, nt.gegenstand),
-          nt.beschreibung && h('p', { className: 'text-bp-muted text-sm mt-2' }, nt.beschreibung),
+          nt.beschreibung && h('p', { className: 'text-gray-400 text-sm mt-2 leading-relaxed' }, nt.beschreibung),
         ),
-        h('span', { className: `text-xs px-3 py-1.5 rounded ${nt.status === 'abgeschlossen' ? 'bg-green-900/40 text-green-300' : nt.status === 'storniert' ? 'bg-gray-800 text-gray-400' : 'bg-bp-card text-bp-muted border border-white/10'}` }, STATUS_LABELS[nt.status] || nt.status),
       ),
       // Dreiklang
-      h('div', { className: 'grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-white/5' },
-        h('div', null,
-          h('p', { className: 'text-xs text-bp-muted uppercase tracking-wider' }, 'Kosten (EUR)'),
-          h('p', { className: 'text-white font-medium mt-1' }, nt.betrag_gefordert ? Number(nt.betrag_gefordert).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' }) : '\u2014'),
-          nt.betrag_genehmigt != null && h('p', { className: 'text-green-300 text-sm' }, `Genehmigt: ${Number(nt.betrag_genehmigt).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}`),
+      h('div', { className: 'grid grid-cols-3 gap-4 mt-5 pt-5 border-t border-white/5' },
+        h('div', { className: 'rounded-xl p-4 border', style: { background: 'rgba(245,166,35,0.04)', borderColor: 'rgba(245,166,35,0.2)' } },
+          h('div', { className: 'text-xs text-gray-500 uppercase tracking-widest mb-1.5' }, 'Kosten (EUR)'),
+          h('div', { className: 'text-xl font-bold font-mono text-bp-400' }, EUR(nt.betrag_gefordert)),
+          h('div', { className: 'text-xs text-gray-500 mt-1' }, 'Gefordert (netto)'),
+          nt.betrag_genehmigt != null && h('div', { className: 'text-sm text-green-300 mt-1' }, `Genehmigt: ${EUR(nt.betrag_genehmigt)}`),
         ),
-        h('div', null,
-          h('p', { className: 'text-xs text-bp-muted uppercase tracking-wider' }, 'Zeit (AT)'),
-          h('p', { className: 'text-white font-medium mt-1' }, nt.zeitauswirkung_tage != null ? `${nt.zeitauswirkung_tage} Arbeitstage` : '\u2014'),
+        h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
+          h('div', { className: 'text-xs text-gray-500 uppercase tracking-widest mb-1.5' }, 'Zeit'),
+          h('div', { className: 'text-xl font-bold text-white' },
+            nt.zeitauswirkung_tage != null ? `${nt.zeitauswirkung_tage} ` : '\u2014',
+            nt.zeitauswirkung_tage != null && h('span', { className: 'text-sm font-normal text-gray-400' }, 'Arbeitstage'),
+          ),
         ),
-        h('div', null,
-          h('p', { className: 'text-xs text-bp-muted uppercase tracking-wider' }, 'Qualit\u00E4t'),
-          h('p', { className: 'text-white font-medium mt-1' }, nt.qualitaetsauswirkung || '\u2014'),
+        h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
+          h('div', { className: 'text-xs text-gray-500 uppercase tracking-widest mb-1.5' }, 'Qualit\u00E4t'),
+          h('div', { className: 'text-sm font-medium text-white leading-relaxed' }, nt.qualitaetsauswirkung || '\u2014'),
         ),
       ),
     ),
-    // 7-Schritte-Stepper
-    h('div', { className: 'bg-bp-card border border-white/10 rounded-xl p-6' },
-      h('h3', { className: 'text-white font-semibold mb-4' }, '7-Schritte-Pr\u00FCfung'),
-      h('div', { className: 'space-y-3' },
-        SCHRITT_LABELS.map((label, i) => {
-          const nr = i + 1
-          const s = schrittMap[nr]
-          const done = s && s.abgeschlossen
-          const hasKi = s && s.ki_ergebnis
-          const kiPending = hasKi && s.ki_bestaetigt === null
-          const aktuell = nr === (nt.aktueller_schritt || 0) + 1
 
-          return h('div', { key: nr, className: `flex items-start gap-3 p-3 rounded-lg ${done ? 'bg-green-900/10 border border-green-900/20' : aktuell ? 'bg-bp-400/5 border border-bp-400/20' : 'border border-white/5'}` },
-            // Nummer-Badge
-            h('div', { className: `w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${done ? 'bg-green-600 text-white' : aktuell ? 'bg-bp-400 text-bp-dark' : 'bg-white/5 text-bp-muted'}` }, done ? '\u2713' : nr),
-            h('div', { className: 'flex-1 min-w-0' },
-              h('p', { className: `text-sm font-medium ${done ? 'text-green-300' : aktuell ? 'text-bp-400' : 'text-bp-muted'}` }, label),
-              s && s.ergebnis && h('p', { className: 'text-xs text-bp-muted mt-1 whitespace-pre-wrap' }, s.ergebnis.substring(0, 200)),
-              // KI-Buttons (Schritte 2-4)
-              kiPending && h('div', { className: 'flex gap-2 mt-2' },
-                h('button', { className: 'bp-btn px-3 py-1 rounded text-xs', disabled: actionLoading, onClick: () => kiBestaetigen(nr, true) }, '\u2713 Best\u00E4tigen'),
-                h('button', { className: 'bp-btn-outline px-3 py-1 rounded text-xs', disabled: actionLoading, onClick: () => kiBestaetigen(nr, false) }, '\u2717 Ablehnen'),
+    // === Zwei-Spalten-Layout: Stepper + Content ===
+    h('div', { style: { display: 'grid', gridTemplateColumns: '280px 1fr', gap: '20px' } },
+
+      // --- STEPPER SIDEBAR ---
+      h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
+        h('h3', { className: 'text-xs font-semibold text-white uppercase tracking-wider mb-4' }, '7-Schritte-Pr\u00FCfung'),
+        h('div', { className: 'flex flex-col gap-1' },
+          SCHRITT_LABELS.map((label, i) => {
+            const nr = i + 1
+            const s = schrittMap[nr]
+            const done = s && s.abgeschlossen
+            const hasKi = s && s.ki_ergebnis
+            const kiPending = hasKi && s.ki_bestaetigt === null
+            const isActive = nr === aktuell
+
+            return h('button', {
+              key: nr,
+              onClick: () => setActiveTab(SCHRITT_TAB_MAP[nr] || 'vorlage'),
+              className: 'text-left rounded-xl px-3 py-2.5 transition-all flex items-center gap-2.5',
+              style: {
+                background: done ? 'rgba(74,222,128,0.08)' : isActive ? 'rgba(245,166,35,0.08)' : 'transparent',
+                border: `1px solid ${done ? 'rgba(74,222,128,0.15)' : isActive ? 'rgba(245,166,35,0.2)' : 'rgba(255,255,255,0.06)'}`,
+              },
+            },
+              h('div', {
+                className: 'w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0',
+                style: {
+                  background: done ? '#4ade80' : isActive ? '#f5a623' : 'rgba(255,255,255,0.06)',
+                  color: done || isActive ? '#111' : '#6b7280',
+                },
+              }, done ? '\u2713' : nr),
+              h('div', { className: 'flex-1 min-w-0' },
+                h('div', { className: `text-xs font-medium ${done ? 'text-green-300' : isActive ? 'text-bp-400' : 'text-gray-500'}` }, label),
+                s && s.abgeschlossen_am && h('div', { className: 'text-[10px] text-gray-500 mt-0.5' }, new Date(s.abgeschlossen_am).toLocaleDateString('de-DE')),
+                kiPending && h('div', { className: 'text-[10px] text-bp-400 font-semibold mt-0.5' }, '\u23F3 Best\u00E4tigung ausstehend'),
               ),
-              // Aktions-Buttons
-              aktuell && !done && nr === 2 && h('button', { className: 'bp-btn px-3 py-1.5 rounded text-xs mt-2', disabled: actionLoading, onClick: lvAbgleich }, actionLoading ? 'L\u00E4uft...' : 'LV-Abgleich starten'),
-              aktuell && !done && nr === 3 && h('button', { className: 'bp-btn px-3 py-1.5 rounded text-xs mt-2', disabled: actionLoading, onClick: kostenAbgleich }, actionLoading ? 'L\u00E4uft...' : 'Kostenabgleich starten'),
-              aktuell && !done && nr === 4 && h('button', { className: 'bp-btn px-3 py-1.5 rounded text-xs mt-2', disabled: actionLoading, onClick: vorlageGenerieren }, actionLoading ? 'L\u00E4uft...' : 'Vorlage generieren'),
+            )
+          }),
+        ),
+        // Aktions-Buttons unter Stepper
+        aktuell === 2 && !schrittMap[2]?.abgeschlossen && h('button', { className: 'bp-btn w-full px-3 py-2 rounded-lg text-xs mt-4', disabled: actionLoading, onClick: lvAbgleich }, actionLoading ? 'L\u00E4uft...' : '\u25B6 LV-Abgleich starten'),
+        aktuell === 3 && !schrittMap[3]?.abgeschlossen && h('button', { className: 'bp-btn w-full px-3 py-2 rounded-lg text-xs mt-4', disabled: actionLoading, onClick: kostenAbgleich }, actionLoading ? 'L\u00E4uft...' : '\u25B6 Kostenabgleich starten'),
+        aktuell === 4 && !schrittMap[4]?.abgeschlossen && h('button', { className: 'bp-btn w-full px-3 py-2 rounded-lg text-xs mt-4', disabled: actionLoading, onClick: vorlageGenerieren }, actionLoading ? 'Generiert...' : '\u25B6 Vorlage generieren'),
+        // Schritt 5: Pruefung PL (manuell)
+        aktuell === 5 && h('div', { className: 'mt-4 flex flex-col gap-2' },
+          h('p', { className: 'text-[11px] text-gray-400' }, 'Pr\u00FCfergebnis der Projektleitung dokumentieren:'),
+          h('textarea', { className: 'bp-input w-full px-3 py-2 rounded-lg text-xs', rows: 3, placeholder: 'z.B. "Vorlage gepr\u00FCft, Kosten\u00FCberh\u00F6hung best\u00E4tigt. Nachverhandlung empfohlen."', value: schrittKommentar, onChange: e => setSchrittKommentar(e.target.value) }),
+          h('button', { className: 'bp-btn w-full px-3 py-2 rounded-lg text-xs', disabled: actionLoading || !schrittKommentar.trim(), onClick: () => schrittAbschliessen(5, schrittKommentar) }, actionLoading ? 'L\u00E4uft...' : '\u2713 Pr\u00FCfung abschlie\u00DFen'),
+        ),
+        // Schritt 6: Entscheidung → Tab wechseln
+        aktuell === 6 && h('button', { className: 'bp-btn w-full px-3 py-2 rounded-lg text-xs mt-4', onClick: () => setActiveTab('entscheidung') }, '\u25B6 Entscheidung treffen'),
+        // Schritt 7: Abschluss (manuell)
+        aktuell === 7 && h('div', { className: 'mt-4 flex flex-col gap-2' },
+          h('p', { className: 'text-[11px] text-gray-400' }, 'Terminplan-Auswirkung und Abschlussvermerk dokumentieren:'),
+          h('textarea', { className: 'bp-input w-full px-3 py-2 rounded-lg text-xs', rows: 3, placeholder: 'z.B. "Terminplanauswirkung: +12 AT auf Gewerk TGA. Nachtrag dokumentiert und archiviert."', value: schrittKommentar, onChange: e => setSchrittKommentar(e.target.value) }),
+          h('button', { className: 'bp-btn w-full px-3 py-2 rounded-lg text-xs', disabled: actionLoading || !schrittKommentar.trim(), onClick: () => schrittAbschliessen(7, schrittKommentar) }, actionLoading ? 'L\u00E4uft...' : '\u2713 Nachtrag abschlie\u00DFen'),
+        ),
+      ),
+
+      // --- CONTENT AREA ---
+      h('div', null,
+        // Tab-Bar
+        h('div', { className: 'flex gap-1 mb-4 bg-bp-card rounded-xl p-1 border border-white/5' },
+          [
+            { id: 'vorlage', label: '\uD83D\uDCCB Entscheidungsvorlage' },
+            { id: 'lv', label: '\uD83D\uDD0D LV-Abgleich' },
+            { id: 'kosten', label: '\uD83D\uDCB0 Kostenabgleich' },
+            { id: 'entscheidung', label: '\u2696\uFE0F Entscheidung' },
+          ].map(t => h('button', {
+            key: t.id,
+            onClick: () => setActiveTab(t.id),
+            className: `flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+              activeTab === t.id
+                ? 'text-bp-400 border border-bp-400/30'
+                : 'text-gray-500 border border-transparent hover:text-white'
+            }`,
+            style: activeTab === t.id ? { background: 'rgba(245,166,35,0.08)' } : {},
+          }, t.label)),
+        ),
+
+        // === TAB: Entscheidungsvorlage ===
+        activeTab === 'vorlage' && h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl overflow-hidden' },
+          // Vorlage Header
+          h('div', { className: 'px-5 py-4 border-b border-white/5 flex justify-between items-center' },
+            h('div', { className: 'flex items-center gap-3' },
+              h('span', { className: 'text-sm font-semibold text-white' }, 'Entscheidungsvorlage'),
+              aktuelleVorlage && badge(aktuelleVorlage.freigegeben ? `Freigegeben \u2014 v${aktuelleVorlage.version}` : `Entwurf \u2014 v${aktuelleVorlage.version}`, aktuelleVorlage.freigegeben ? 'green' : 'amber'),
             ),
-            s && s.abgeschlossen_am && h('span', { className: 'text-xs text-bp-muted flex-shrink-0' }, new Date(s.abgeschlossen_am).toLocaleDateString('de-DE')),
-          )
-        }),
+            aktuelleVorlage && h('div', { className: 'flex gap-2' },
+              !aktuelleVorlage.freigegeben && h('button', {
+                className: 'bp-btn px-4 py-1.5 rounded-lg text-xs',
+                disabled: actionLoading,
+                onClick: () => vorlageFreigeben(aktuelleVorlage.id),
+              }, '\u2713 Freigeben'),
+              h('button', {
+                className: 'bp-btn-outline px-4 py-1.5 rounded-lg text-xs',
+                disabled: actionLoading,
+                onClick: vorlageGenerieren,
+              }, '\u21BB Neu generieren'),
+            ),
+          ),
+          // Vorlage Body
+          aktuelleVorlage ? h('div', { className: 'px-6 py-5' },
+            // KI-Hinweis
+            h('div', { className: 'rounded-lg px-4 py-2.5 mb-5 flex items-center gap-2', style: { background: 'rgba(245,166,35,0.04)', border: '1px solid rgba(245,166,35,0.2)' } },
+              h('span', { className: 'text-sm' }, '\uD83E\uDD16'),
+              h('span', { className: 'text-xs text-bp-400' },
+                `Generiert von BauPilot (lokal) \u2014 ${aktuelleVorlage.erstellt_am ? new Date(aktuelleVorlage.erstellt_am).toLocaleString('de-DE') : ''}`,
+              ),
+            ),
+            // Abschnitte
+            (() => {
+              const a = parseVorlageAbschnitte(aktuelleVorlage.vorlage_text)
+              if (!a) return h('p', { className: 'text-gray-400 text-sm' }, aktuelleVorlage.vorlage_text)
+              const abschnittDef = [
+                { key: 'sachverhalt', label: 'SACHVERHALT', color: '#f5a623' },
+                { key: 'pruefergebnis', label: 'PR\u00DCFERGEBNIS', color: '#60a5fa' },
+                { key: 'einschaetzung', label: 'BAUPILOT-EINSCH\u00C4TZUNG', color: '#4ade80' },
+              ]
+              return h('div', null,
+                abschnittDef.map(def => a[def.key] ? h('div', { key: def.key, className: 'mb-5' },
+                  h('div', { className: 'flex items-center gap-2 mb-2.5' },
+                    h('div', { style: { width: 3, height: 18, background: def.color, borderRadius: 2 } }),
+                    h('span', { className: 'text-xs font-bold uppercase tracking-wider', style: { color: def.color } }, def.label),
+                  ),
+                  h('p', { className: 'text-sm text-gray-400 leading-relaxed whitespace-pre-wrap' }, a[def.key]),
+                ) : null),
+                // Disclaimer
+                h('div', { className: 'mt-5 px-4 py-2.5 rounded-lg border border-dashed border-white/10', style: { background: 'rgba(255,255,255,0.02)' } },
+                  h('span', { className: 'text-[11px] text-gray-500 italic' }, 'Diese Einsch\u00E4tzung beruht ausschlie\u00DFlich auf den bereitgestellten Fakten und dient als Entscheidungsunterst\u00FCtzung. Die endg\u00FCltige Entscheidung liegt bei der Projektleitung.'),
+                ),
+              )
+            })(),
+            // KI-Bestaetigungs-Buttons fuer Schritt 4
+            schrittMap[4] && schrittMap[4].ki_bestaetigt === null && h('div', { className: 'flex gap-2 mt-4 pt-4 border-t border-white/5' },
+              h('button', { className: 'bp-btn px-4 py-2 rounded-lg text-xs', disabled: actionLoading, onClick: () => kiBestaetigen(4, true) }, '\u2713 KI-Ergebnis best\u00E4tigen'),
+              h('button', { className: 'bp-btn-outline px-4 py-2 rounded-lg text-xs', disabled: actionLoading, onClick: () => kiBestaetigen(4, false) }, '\u2717 Ablehnen'),
+            ),
+          ) : h('div', { className: 'px-6 py-12 text-center' },
+            h('p', { className: 'text-gray-500 text-sm' }, 'Noch keine Vorlage generiert.'),
+            aktuell >= 4 && h('button', { className: 'bp-btn px-5 py-2 rounded-lg text-sm mt-3', disabled: actionLoading, onClick: vorlageGenerieren }, actionLoading ? 'Generiert...' : 'Vorlage generieren'),
+          ),
+        ),
+
+        // === TAB: LV-Abgleich ===
+        activeTab === 'lv' && h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
+          h('div', { className: 'flex justify-between items-center mb-4' },
+            h('h3', { className: 'text-sm font-semibold text-white' },
+              `LV-Abgleich${lvDaten ? ` \u2014 ${lvDaten.anzahl_treffer || 0} Treffer` : ''}`,
+            ),
+            schrittMap[2]?.ki_bestaetigt === true && badge('\u2713 Best\u00E4tigt', 'green'),
+            schrittMap[2]?.ki_bestaetigt === null && schrittMap[2]?.ki_ergebnis && badge('\u23F3 Ausstehend', 'amber'),
+          ),
+          lvDaten && lvDaten.suchbegriff && h('div', { className: 'text-[11px] text-gray-500 mb-4' },
+            'Suchbegriff: ', h('span', { className: 'font-mono text-gray-400' }, lvDaten.suchbegriff),
+          ),
+          lvDaten && lvDaten.treffer && lvDaten.treffer.length > 0 ? h('div', { className: 'flex flex-col gap-1.5' },
+            // Grid Header
+            h('div', { style: { display: 'grid', gridTemplateColumns: '60px 100px 1fr 80px 50px', gap: '8px' }, className: 'px-3 py-1.5 text-[10px] text-gray-500 uppercase tracking-wider' },
+              h('div', null, 'LV'), h('div', null, 'OZ'), h('div', null, 'Kurztext'), h('div', { className: 'text-right' }, 'EP netto'), h('div', { className: 'text-right' }, 'Rel.'),
+            ),
+            lvDaten.treffer.map((t, i) => h('div', {
+              key: i,
+              style: { display: 'grid', gridTemplateColumns: '60px 100px 1fr 80px 50px', gap: '8px', background: i < 2 ? 'rgba(245,166,35,0.04)' : 'transparent', border: `1px solid ${i < 2 ? 'rgba(245,166,35,0.2)' : 'rgba(255,255,255,0.06)'}` },
+              className: 'px-3 py-2.5 rounded-lg items-center',
+            },
+              h('div', { className: 'text-xs font-mono font-semibold text-bp-400' }, t.lv_nummer || '?'),
+              h('div', { className: 'text-[11px] font-mono text-gray-400' }, t.oz || '?'),
+              h('div', { className: 'text-xs text-white', title: t.kurztext || '', style: { lineHeight: '1.4' } }, t.kurztext || ''),
+              h('div', { className: 'text-xs text-right font-mono', style: { color: t.einheitspreis ? '#e5e5e5' : '#6b7280' } }, t.einheitspreis ? `${Number(t.einheitspreis).toFixed(2)} \u20AC` : '\u2014'),
+              h('div', { className: 'text-right' },
+                h('span', { className: `text-[10px] px-1.5 py-0.5 rounded ${t.relevanz >= 0.08 ? 'text-bp-400' : 'text-gray-500'}`, style: { background: t.relevanz >= 0.08 ? 'rgba(245,166,35,0.08)' : 'rgba(255,255,255,0.04)' } },
+                  `${(Number(t.relevanz || 0) * 100).toFixed(0)}%`,
+                ),
+              ),
+            )),
+          ) : h('div', { className: 'text-gray-500 text-sm text-center py-8' },
+            lvDaten ? 'Keine passenden LV-Positionen gefunden.' : 'LV-Abgleich noch nicht durchgef\u00FChrt.',
+          ),
+          // KI-Buttons
+          schrittMap[2]?.ki_bestaetigt === null && schrittMap[2]?.ki_ergebnis && h('div', { className: 'flex gap-2 mt-4 pt-4 border-t border-white/5' },
+            h('button', { className: 'bp-btn px-4 py-2 rounded-lg text-xs', disabled: actionLoading, onClick: () => kiBestaetigen(2, true) }, '\u2713 Best\u00E4tigen'),
+            h('button', { className: 'bp-btn-outline px-4 py-2 rounded-lg text-xs', disabled: actionLoading, onClick: () => kiBestaetigen(2, false) }, '\u2717 Ablehnen'),
+          ),
+        ),
+
+        // === TAB: Kostenabgleich ===
+        activeTab === 'kosten' && h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
+          h('div', { className: 'flex justify-between items-center mb-4' },
+            h('h3', { className: 'text-sm font-semibold text-white' }, 'Kostenabgleich'),
+            kostenDaten?.gesamtbewertung && badge(
+              kostenDaten.gesamtbewertung === 'angemessen' ? 'Angemessen' : kostenDaten.gesamtbewertung === 'ueber_bandbreite' ? '\u00DCber Bandbreite' : kostenDaten.gesamtbewertung,
+              kostenDaten.gesamtbewertung === 'angemessen' ? 'green' : 'red',
+            ),
+          ),
+          kostenDaten ? h('div', null,
+            // Gefordert + Regionalfaktor
+            h('div', { className: 'grid grid-cols-2 gap-3 mb-5' },
+              h('div', { className: 'rounded-xl p-4 border', style: { background: 'rgba(245,166,35,0.08)', borderColor: 'rgba(245,166,35,0.2)' } },
+                h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest' }, 'Gefordert'),
+                h('div', { className: 'text-xl font-bold font-mono text-bp-400 mt-1' }, EUR(kostenDaten.betrag_gefordert)),
+              ),
+              h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
+                h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest' }, 'Regionalfaktor Jena'),
+                h('div', { className: 'text-xl font-bold font-mono text-white mt-1' }, kostenDaten.bki_regionalfaktor || '\u2014'),
+              ),
+            ),
+            // Vergleiche
+            kostenDaten.vergleiche && kostenDaten.vergleiche.map((v, i) => h('div', {
+              key: i,
+              className: 'flex justify-between items-center px-4 py-3 rounded-xl mb-2',
+              style: {
+                background: v.bewertung === 'angemessen' ? 'rgba(74,222,128,0.08)' : 'rgba(248,113,113,0.08)',
+                border: `1px solid ${v.bewertung === 'angemessen' ? 'rgba(74,222,128,0.12)' : 'rgba(248,113,113,0.12)'}`,
+              },
+            },
+              h('div', null,
+                h('div', { className: 'text-xs font-medium text-white' }, `${v.quelle}: ${v.bezeichnung}`),
+                h('div', { className: 'text-[11px] text-gray-500 mt-0.5' }, `Referenzpreis: ${EUR(v.referenzpreis_regionalisiert || v.referenzpreis_netto)}`),
+              ),
+              h('div', { className: 'text-right' },
+                h('div', { className: 'text-base font-bold font-mono', style: { color: v.bewertung === 'angemessen' ? '#4ade80' : '#f87171' } },
+                  v.abweichung_prozent != null ? `${v.abweichung_prozent > 0 ? '+' : ''}${Number(v.abweichung_prozent).toLocaleString('de-DE')}%` : '\u2014',
+                ),
+                h('div', { className: 'text-[10px]', style: { color: v.bewertung === 'angemessen' ? '#4ade80' : '#f87171' } }, v.bewertung === 'angemessen' ? 'angemessen' : '\u00FCber Bandbreite'),
+              ),
+            )),
+            kostenDaten.vergleiche && kostenDaten.vergleiche.length === 0 && h('div', { className: 'text-gray-500 text-sm text-center py-4' }, 'Keine Vergleichspositionen gefunden.'),
+          ) : h('div', { className: 'text-gray-500 text-sm text-center py-8' }, 'Kostenabgleich noch nicht durchgef\u00FChrt.'),
+          // KI-Buttons
+          schrittMap[3]?.ki_bestaetigt === null && schrittMap[3]?.ki_ergebnis && h('div', { className: 'flex gap-2 mt-4 pt-4 border-t border-white/5' },
+            h('button', { className: 'bp-btn px-4 py-2 rounded-lg text-xs', disabled: actionLoading, onClick: () => kiBestaetigen(3, true) }, '\u2713 Best\u00E4tigen'),
+            h('button', { className: 'bp-btn-outline px-4 py-2 rounded-lg text-xs', disabled: actionLoading, onClick: () => kiBestaetigen(3, false) }, '\u2717 Ablehnen'),
+          ),
+        ),
+
+        // === TAB: Entscheidung ===
+        activeTab === 'entscheidung' && h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
+          h('h3', { className: 'text-sm font-semibold text-white mb-5' }, 'Entscheidung \u2014 Variante w\u00E4hlen'),
+          h('div', { className: 'grid grid-cols-3 gap-3' },
+            [
+              { v: 'A', label: 'Genehmigt', desc: 'Vollst\u00E4ndig genehmigt. NTV wird automatisch angelegt.', color: 'green', icon: '\u2713' },
+              { v: 'B', label: 'Teilweise', desc: 'Teilweise genehmigt. Betrag muss angegeben werden.', color: 'amber', icon: '\u00BD' },
+              { v: 'C', label: 'Abgelehnt', desc: 'Nachtragsforderung wird zur\u00FCckgewiesen.', color: 'red', icon: '\u2717' },
+            ].map(opt => h('button', {
+              key: opt.v,
+              disabled: actionLoading || aktuell < 6,
+              onClick: () => entscheidungTreffen(opt.v),
+              className: 'text-left rounded-2xl p-5 transition-all border-2 border-white/5 hover:border-bp-400/50',
+              style: { background: '#1a1a1a', cursor: aktuell < 6 ? 'not-allowed' : 'pointer', opacity: aktuell < 6 ? 0.5 : 1 },
+            },
+              h('div', { className: 'flex items-center gap-3 mb-3' },
+                h('div', { className: 'w-9 h-9 rounded-xl flex items-center justify-center text-lg font-bold bg-white/5', style: { color: opt.color === 'green' ? '#4ade80' : opt.color === 'red' ? '#f87171' : '#f5a623' } }, opt.icon),
+                h('div', null,
+                  h('div', { className: 'text-lg font-bold text-white' }, `Variante ${opt.v}`),
+                  h('div', { className: 'text-xs font-semibold', style: { color: opt.color === 'green' ? '#4ade80' : opt.color === 'red' ? '#f87171' : '#f5a623' } }, opt.label),
+                ),
+              ),
+              h('p', { className: 'text-xs text-gray-500 leading-relaxed' }, opt.desc),
+            )),
+          ),
+          h('div', { className: 'mt-4 px-4 py-2.5 rounded-lg bg-white/[.02] border border-white/5' },
+            h('span', { className: 'text-[11px] text-gray-500' }, '\u26A0\uFE0F Schritte 1\u20135 m\u00FCssen abgeschlossen sein, bevor eine Entscheidung getroffen werden kann. Nur Projektleitung und Admin d\u00FCrfen entscheiden.'),
+          ),
+        ),
       ),
     ),
   )
 }
+
 
 // ================================================================
 // NACHTRAEGE-SEITE mit Detail-Drill-Down (AP 2.1)
