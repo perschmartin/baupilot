@@ -119,7 +119,7 @@ class EntscheidungsvorlageService:
                     vorgang_id, version, vorlage_text, basisdaten,
                     generiert_von, erstellt_von
                 ) VALUES (
-                    :vid, :version, :text, :basisdaten::jsonb,
+                    :vid, :version, :text, CAST(:basisdaten AS jsonb),
                     'baupilot', :erstellt_von
                 )
                 RETURNING id, vorgang_id, version, vorlage_text, basisdaten,
@@ -255,7 +255,7 @@ Fuelle den Dreiklang aus:
             response = httpx.post(
                 f"{LITELLM_BASE}/v1/chat/completions",
                 json={
-                    "model": "qwen2.5:32b",
+                    "model": "qwen-32b",
                     "messages": [
                         {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
