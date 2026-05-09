@@ -78,8 +78,23 @@ class LVAbgleichService:
         if not woerter:
             return []
 
-        # Jedes Wort mit :* fuer Prefix-Match
-        ts_query = " & ".join(f"{w}:*" for w in woerter[:5])
+        # Stoppwoerter filtern (Metadaten aus Nachtragsnamen)
+        stoppwoerter = {"ntv", "nachtrag", "alternativ", "zusaetzlich", "aenderung", "mehr", "weniger"}
+        woerter = [w for w in woerter if w.lower() not in stoppwoerter and not w.isdigit()]
+        if not woerter:
+            return []
+
+        # Lange Komposita aufbrechen (>12 Zeichen: Stamm auf 10 kuerzen)
+        suchterme = []
+        for w in woerter[:5]:
+            suchterme.append(f"{w}:*")
+            if len(w) > 12:
+                suchterme.append(f"{w[:10]}:*")
+                if len(w) > 16:
+                    suchterme.append(f"{w[:7]}:*")
+
+        # OR-Verknuepfung fuer breitere Treffer, Relevanz sortiert
+        ts_query = " | ".join(suchterme)
 
         rows = self.db.execute(
             text("""

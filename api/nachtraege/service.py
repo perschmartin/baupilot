@@ -486,8 +486,8 @@ class NachtragsService:
         self.db.execute(
             text("""
                 UPDATE nachtragspruefung
-                SET ki_eingabe = :eingabe::jsonb,
-                    ki_ergebnis = :ergebnis::jsonb,
+                SET ki_eingabe = CAST(:eingabe AS jsonb),
+                    ki_ergebnis = CAST(:ergebnis AS jsonb),
                     ki_konfidenz = :konfidenz,
                     geaendert_am = NOW(),
                     geaendert_von = :bearbeiter
