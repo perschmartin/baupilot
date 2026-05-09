@@ -44,10 +44,6 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev_jwt_secret_change_me"
     totp_key: str = "dev_totp_key_change_me_needs_64_hex_chars_0123456789abcdef"
 
-    # Auth (AP 1.1)
-    jwt_secret: str = "dev_jwt_secret_change_me"
-    totp_key: str = "dev_totp_key_change_me_needs_64_hex_chars_0123456789abcdef"
-
     @property
     def database_url(self) -> str:
         return (
@@ -55,7 +51,7 @@ class Settings(BaseSettings):
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

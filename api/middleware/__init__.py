@@ -19,7 +19,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         path = request.url.path
-        if path in TENANT_EXEMPT_PATHS or path.startswith("/api/v1/auth") or path.startswith("/api/v1/aufgaben") or path.startswith("/api/v1/vorgaenge") or path.startswith("/api/v1/kontakte") or path.startswith("/api/v1/dokumente"):
+        if path in TENANT_EXEMPT_PATHS or path.startswith("/api/v1/auth") or path.startswith("/api/v1/aufgaben") or path.startswith("/api/v1/vorgaenge") or path.startswith("/api/v1/kontakte") or path.startswith("/api/v1/dokumente") or path.startswith("/api/v1/lv") or path.startswith("/api/v1/nachtraege"):
             return await call_next(request)
         tenant_slug = request.headers.get(TENANT_HEADER)
         if not tenant_slug:
