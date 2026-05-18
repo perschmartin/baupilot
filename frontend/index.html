@@ -663,7 +663,14 @@ function VorgaengeSeite({ typ, label }) {
   const [suche, setSuche] = useState('')
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
+  // AP 2.2a: Drill-Down auf BehinderungDetail. Aktuell nur fuer
+  // typ='behinderungsanzeige' aktiv; Bedenken/Maengel folgen in eigenen Etappen.
+  const [selected, setSelected] = useState(null)
   const config = TYP_CONFIG[typ] || TYP_CONFIG.nachtrag
+
+  if (selected && typ === 'behinderungsanzeige') {
+    return h(BehinderungDetail, { id: selected, onBack: () => setSelected(null) })
+  }
 
   const laden = useCallback(async () => {
     setLoading(true)
@@ -715,7 +722,11 @@ function VorgaengeSeite({ typ, label }) {
         vorgaenge.map(v =>
           h('div', {
             key: v.id,
-            className: 'grid grid-cols-12 gap-2 px-4 py-3 rounded-lg bg-bp-card border border-white/5 hover:border-white/10 transition items-center',
+            // AP 2.2a Drill-Down: bei Behinderungen Klick aktiv. Andere Typen bleiben read-only
+            // (Bedenken/Maengel bekommen ihren Drill-Down in spaeteren Etappen).
+            onClick: typ === 'behinderungsanzeige' ? () => setSelected(v.id) : undefined,
+            className: 'grid grid-cols-12 gap-2 px-4 py-3 rounded-lg bg-bp-card border border-white/5 hover:border-white/10 transition items-center'
+              + (typ === 'behinderungsanzeige' ? ' cursor-pointer' : ''),
           },
             h('div', { className: 'col-span-2 font-mono text-sm text-bp-400' }, v.nummer),
             h('div', { className: 'col-span-8 text-sm text-white truncate' }, v.gegenstand),
@@ -732,6 +743,184 @@ function VorgaengeSeite({ typ, label }) {
       ),
   )
 }
+
+// ================================================================
+// BEHINDERUNG-DETAIL (AP 2.2a)
+// ================================================================
+// 6-Schritte-Workflow analog zu Nachtraegen, aber ohne LV/Kosten/Vorlage:
+//   1 Erfassung -> 2 Pruefung -> 3 Anerkennung/Rueckweisung
+//   -> 4 Schriftverkehr -> 5 erneute Pruefung -> 6 Abmeldung GU.
+// Schritte 3 und 6 erfordern Projektleiter/Admin (Backend pruefst die Rolle).
+
+const BEHA_SCHRITT_LABELS = [
+  'Erfassung', 'Pruefung', 'Anerkennung/Rueckweisung',
+  'Schriftverkehr', 'Erneute Pruefung', 'Abmeldung GU',
+]
+
+function BehinderungDetail({ id, onBack }) {
+  const { token } = useAuth()
+  const [beh, setBeh] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+  const [actionLoading, setActionLoading] = useState(false)
+  const [schrittKommentar, setSchrittKommentar] = useState('')
+
+  const laden = useCallback(async () => {
+    setLoading(true)
+    try {
+      const r = await bpApi(`/behinderungen/${id}`, { token })
+      setBeh(r)
+    } catch (e) { setErr(e.detail || 'Fehler beim Laden') }
+    setLoading(false)
+  }, [id, token])
+
+  useEffect(() => { laden() }, [laden])
+
+  const schrittAbschliessen = async (nr, ergebnis) => {
+    if (!ergebnis || !ergebnis.trim()) { setErr('Bitte Ergebnis eingeben.'); return }
+    setActionLoading(true)
+    try {
+      await bpApi(`/behinderungen/${id}/schritt/${nr}`, { method: 'POST', body: { ergebnis: ergebnis.trim() }, token })
+      setSchrittKommentar('')
+      await laden()
+    } catch (e) { setErr(e.detail || 'Fehler beim Abschluss') }
+    setActionLoading(false)
+  }
+
+  if (loading) return h('p', { className: 'text-bp-muted py-8 text-center' }, 'Laden...')
+  if (!beh) return h('p', { className: 'text-red-400 py-8 text-center' }, err || 'Behinderung nicht gefunden')
+
+  // Map Schritt-Nr -> Schritt-Daten fuer schnellen Zugriff
+  const schrittMap = {}
+  for (const s of (beh.pruefschritte || [])) schrittMap[s.schritt] = s
+  const aktuell = beh.aktueller_schritt || 0
+  const naechsterSchritt = Math.min(aktuell + 1, 6)
+
+  return h('div', { className: 'fade-in' },
+    // Kopfzeile mit Back-Button
+    h('div', { className: 'flex items-center gap-3 mb-4' },
+      h('button', { onClick: onBack, className: 'text-xs text-bp-muted hover:text-white' }, '← Zurueck zur Liste'),
+      h('span', { className: 'text-xs text-gray-600' }, '/'),
+      h('span', { className: 'text-xs font-mono text-bp-400' }, beh.nummer),
+    ),
+    h('div', { className: 'flex items-center justify-between mb-6' },
+      h('div', null,
+        h('h2', { className: 'text-lg font-semibold text-white' }, '⚠️ ' + beh.gegenstand),
+        h('p', { className: 'text-xs text-bp-muted mt-1' }, 'Behinderungsanzeige nach VOB/B §6 · Status: ' + (STATUS_LABELS[beh.status] || beh.status)),
+      ),
+      err && h('span', { className: 'text-xs text-red-400' }, err),
+    ),
+    // Zwei-Spalten-Layout: Stepper-Sidebar + Content
+    h('div', { style: { display: 'grid', gridTemplateColumns: '280px 1fr', gap: '20px' } },
+      // === STEPPER-SIDEBAR ===
+      h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
+        h('h3', { className: 'text-xs uppercase tracking-widest text-gray-500 mb-4' }, 'Pruefschritte'),
+        h('div', { className: 'flex flex-col gap-2' },
+          BEHA_SCHRITT_LABELS.map((lbl, i) => {
+            const nr = i + 1
+            const s = schrittMap[nr]
+            const done = s && s.abgeschlossen
+            const isAktuell = nr === naechsterSchritt && !done
+            // Farben: gruen=abgeschlossen, amber=aktuell, grau=ausstehend
+            const dotBg = done ? '#4ade80' : isAktuell ? '#f5a623' : '#374151'
+            const txtCol = done ? 'text-white' : isAktuell ? 'text-amber-300' : 'text-gray-500'
+            return h('div', { key: nr, className: 'flex items-start gap-3' },
+              h('div', { className: 'mt-1', style: { width: '12px', height: '12px', borderRadius: '50%', background: dotBg, border: '2px solid #1a1a1a', boxShadow: isAktuell ? '0 0 0 2px rgba(245,166,35,0.3)' : 'none' } }),
+              h('div', { className: 'flex-1 min-w-0' },
+                h('div', { className: `text-xs font-semibold ${txtCol}` }, `${nr}. ${lbl}`),
+                s?.abgeschlossen_am && h('div', { className: 'text-[10px] text-gray-500 mt-0.5' }, new Date(s.abgeschlossen_am).toLocaleString('de-DE')),
+                done && s?.ergebnis && h('div', { className: 'text-[11px] text-gray-400 mt-1 whitespace-pre-wrap' }, s.ergebnis),
+              ),
+            )
+          }),
+        ),
+        // Aktions-Block: aktuellen Schritt abschliessen
+        aktuell < 6 && h('div', { className: 'mt-5 pt-5 border-t border-white/5' },
+          h('p', { className: 'text-[11px] text-gray-400 mb-2' }, `Schritt ${naechsterSchritt} (${BEHA_SCHRITT_LABELS[naechsterSchritt - 1]}) abschliessen:`),
+          h('textarea', {
+            className: 'bp-input w-full px-3 py-2 rounded-lg text-xs',
+            rows: 3,
+            placeholder: _placeholderFuerSchritt(naechsterSchritt),
+            value: schrittKommentar,
+            onChange: e => setSchrittKommentar(e.target.value),
+          }),
+          h('button', {
+            className: 'bp-btn w-full px-3 py-2 rounded-lg text-xs mt-2',
+            disabled: actionLoading || !schrittKommentar.trim(),
+            onClick: () => schrittAbschliessen(naechsterSchritt, schrittKommentar),
+          }, actionLoading ? 'Laeuft...' : `✓ Schritt ${naechsterSchritt} abschliessen`),
+          [3, 6].includes(naechsterSchritt) && h('p', { className: 'text-[10px] text-amber-400/80 mt-2' }, '⚠ Nur Projektleitung und Admin'),
+        ),
+        aktuell >= 6 && h('div', { className: 'mt-5 pt-5 border-t border-white/5 rounded-lg p-3', style: { background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.25)' } },
+          h('div', { className: 'text-sm font-semibold text-green-300' }, '✓ Alle Schritte abgeschlossen'),
+          h('p', { className: 'text-[11px] text-gray-400 mt-1' }, 'Behinderung als erledigt dokumentiert.'),
+        ),
+      ),
+      // === CONTENT — Stammdaten + Dreiklang ===
+      h('div', null,
+        h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5 mb-4' },
+          h('h3', { className: 'text-sm font-semibold text-white mb-4' }, 'Stammdaten'),
+          h('div', { className: 'grid grid-cols-2 gap-3 text-xs' },
+            _stamm('Nummer', beh.nummer || '—'),
+            _stamm('Status', STATUS_LABELS[beh.status] || beh.status),
+            _stamm('Prioritaet', beh.prioritaet || '—'),
+            _stamm('Frist', beh.frist ? new Date(beh.frist).toLocaleDateString('de-DE') : '—'),
+            _stamm('Erstellt am', beh.erstellt_am ? new Date(beh.erstellt_am).toLocaleString('de-DE') : '—'),
+            _stamm('Erstellt von', beh.erstellt_von || '—'),
+          ),
+          beh.beschreibung && h('div', { className: 'mt-4 pt-4 border-t border-white/5' },
+            h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1.5' }, 'Beschreibung'),
+            h('p', { className: 'text-xs text-gray-300 whitespace-pre-wrap' }, beh.beschreibung),
+          ),
+        ),
+        // Dreiklang Q/Z/K (zentrale Pflichtdimension G3)
+        h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
+          h('h3', { className: 'text-sm font-semibold text-white mb-4' }, 'Dreiklang Q/Z/K'),
+          h('div', { className: 'grid grid-cols-3 gap-3' },
+            h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
+              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Qualitaet'),
+              h('div', { className: 'text-sm text-white' }, beh.qualitaet_bewertung || '—'),
+            ),
+            h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
+              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Zeit'),
+              h('div', { className: 'text-base font-bold font-mono text-white' },
+                beh.zeit_arbeitstage != null ? `${beh.zeit_arbeitstage > 0 ? '+' : ''}${beh.zeit_arbeitstage} AT` : '—',
+              ),
+            ),
+            h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
+              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Kosten'),
+              h('div', { className: 'text-base font-bold font-mono text-white' },
+                beh.kosten_eur != null ? EUR(beh.kosten_eur) : '—',
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  )
+}
+
+// Hilfsfunktion: Stammdaten-Zelle
+function _stamm(label, value) {
+  return h('div', null,
+    h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-0.5' }, label),
+    h('div', { className: 'text-white' }, value),
+  )
+}
+
+// Hilfsfunktion: Placeholder-Text passend zum aktuellen Schritt
+function _placeholderFuerSchritt(nr) {
+  const t = {
+    1: 'Eingang dokumentieren: Wann, durch wen, mit welchen Anlagen.',
+    2: 'Sachliche Pruefung: Begruendet die GU die Behinderung schluessig?',
+    3: 'Anerkennung oder Rueckweisung mit fachlicher Begruendung (VOB/B §6).',
+    4: 'Schriftverkehr: Wer wurde wann wie informiert?',
+    5: 'Erneute Pruefung nach Schriftverkehr/Stellungnahme.',
+    6: 'Abmeldung GU dokumentiert. Behinderungsphase abgeschlossen.',
+  }
+  return t[nr] || ''
+}
+
 
 // ================================================================
 // DOKUMENTE-SEITE (AP 1.5)
