@@ -102,6 +102,11 @@ class PruefschrittResponse(BaseModel):
     ki_bestaetigt: bool | None = None
     ki_bestaetigt_von: UUID | None = None
     ki_bestaetigt_am: datetime | None = None
+    # Entscheidungs-Details NT-F-04 (relevant nur fuer Schritt 6)
+    entscheidung_grund: bool | None = None
+    entscheidung_hoehe: bool | None = None
+    begruendung_grund: str | None = None
+    begruendung_hoehe: str | None = None
     # Audit
     erstellt_am: datetime
     erstellt_von: UUID

@@ -185,12 +185,16 @@ class NachtragsService:
         result = dict(row)
 
         # Pruefschritte laden
+        # NT-F-04: entscheidung_grund/hoehe + begruendungen werden aus Migration 008
+        # mitgeladen — relevant ist Schritt 6 (Entscheidung).
         schritte = self.db.execute(
             text("""
                 SELECT id, schritt, titel, ergebnis, bearbeiter_id,
                        abgeschlossen, abgeschlossen_am,
                        ki_eingabe, ki_ergebnis, ki_konfidenz,
                        ki_bestaetigt, ki_bestaetigt_von, ki_bestaetigt_am,
+                       entscheidung_grund, entscheidung_hoehe,
+                       begruendung_grund, begruendung_hoehe,
                        erstellt_am, erstellt_von
                 FROM nachtragspruefung
                 WHERE vorgang_id = :vid
@@ -573,8 +577,22 @@ class NachtragsService:
         benutzer_name: str,
         betrag_genehmigt: float | None = None,
         kommentar: str | None = None,
+        begruendung_grund: str | None = None,
+        begruendung_hoehe: str | None = None,
     ) -> dict[str, Any]:
-        """Entscheidung treffen: Variante A (genehmigt), B (teilweise), C (abgelehnt)."""
+        """Entscheidung treffen: Variante A (genehmigt), B (teilweise), C (abgelehnt).
+
+        NT-F-04: Die Variante mappt auf zwei getrennte BOOL-Felder
+        entscheidung_grund / entscheidung_hoehe in der nachtragspruefung
+        (Migration 008). Die Begruendungen werden vom Bearbeitenden frei
+        eingegeben und sind beide optional, aber empfohlen — sie sind die
+        Grundlage fuer das Protokoll (AP 2.5) und fuer die Beweisfuehrung.
+
+        VOB/B-Mapping:
+          Variante A: grund=TRUE,  hoehe=TRUE  (vollstaendig genehmigt)
+          Variante B: grund=TRUE,  hoehe=FALSE (Grund ja, Hoehe strittig)
+          Variante C: grund=FALSE, hoehe=NULL  (Anspruch dem Grunde nach abgelehnt)
+        """
 
         if variante not in ("A", "B", "C"):
             raise NachtragsError("Variante muss A, B oder C sein.", 400)
@@ -654,6 +672,32 @@ class NachtragsService:
             nachtrag_id, 6, benutzer_id, benutzer_name, ergebnis_text,
             benutzer_rollen=LEITUNGSROLLEN,
         )
+
+        # NT-F-04: Getrennte Entscheidung Grund/Hoehe in nachtragspruefung speichern.
+        # Variante -> BOOL-Mapping wie im VOB/B-Praxismodell (siehe Docstring oben).
+        variante_grund_map = {"A": True,  "B": True,  "C": False}
+        variante_hoehe_map = {"A": True,  "B": False, "C": None}
+        self.db.execute(
+            text("""
+                UPDATE nachtragspruefung SET
+                    entscheidung_grund = :grund,
+                    entscheidung_hoehe = :hoehe,
+                    begruendung_grund  = :bg_grund,
+                    begruendung_hoehe  = :bg_hoehe,
+                    geaendert_am = NOW(),
+                    geaendert_von = :benutzer_id
+                WHERE vorgang_id = :id AND schritt = 6
+            """),
+            {
+                "id": str(nachtrag_id),
+                "grund": variante_grund_map[variante],
+                "hoehe": variante_hoehe_map[variante],
+                "bg_grund": begruendung_grund,
+                "bg_hoehe": begruendung_hoehe,
+                "benutzer_id": benutzer_id,
+            },
+        )
+        self.db.commit()
 
         return self.lade_nachtrag(nachtrag_id)
 

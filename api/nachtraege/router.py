@@ -356,8 +356,15 @@ def entscheidung(
     variante: str = Query(pattern=r"^[ABC]$"),
     betrag_genehmigt: float | None = Query(default=None),
     kommentar: str | None = Query(default=None),
+    begruendung_grund: str | None = Query(default=None),
+    begruendung_hoehe: str | None = Query(default=None),
 ):
-    """Entscheidung treffen: A (genehmigt), B (teilweise), C (abgelehnt)."""
+    """Entscheidung treffen: A (genehmigt), B (teilweise), C (abgelehnt).
+
+    NT-F-04: begruendung_grund und begruendung_hoehe werden in nachtragspruefung
+    (Schritt 6) abgelegt. Die BOOL-Felder entscheidung_grund/hoehe werden aus
+    der Variante abgeleitet. Siehe service.entscheidung_treffen Docstring.
+    """
     rollen = _benutzer_rollen(db, user["sub"])
     if not rollen.intersection({"projektleiter", "admin"}):
         raise HTTPException(status_code=403, detail="Entscheidung erfordert Rolle 'projektleiter' oder 'admin'.")
@@ -370,6 +377,8 @@ def entscheidung(
             benutzer_name=_benutzer_name(user),
             betrag_genehmigt=betrag_genehmigt,
             kommentar=kommentar,
+            begruendung_grund=begruendung_grund,
+            begruendung_hoehe=begruendung_hoehe,
         )
     except NachtragsError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)

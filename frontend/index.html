@@ -1051,6 +1051,11 @@ function NachtragDetail({ id, onBack }) {
   const [activeTab, setActiveTab] = useState('vorlage')
   const [vorlagen, setVorlagen] = useState([])
   const [schrittKommentar, setSchrittKommentar] = useState('')
+  // NT-F-04: getrennte Begruendungen "dem Grunde nach" / "der Hoehe nach"
+  // Werden beim Klick auf eine Varianten-Karte (A/B/C) mitgeschickt und in
+  // nachtragspruefung Schritt 6 (Migration 008) gespeichert.
+  const [begruendungGrund, setBegruendungGrund] = useState('')
+  const [begruendungHoehe, setBegruendungHoehe] = useState('')
 
   const laden = useCallback(async () => {
     setLoading(true)
@@ -1120,9 +1125,17 @@ function NachtragDetail({ id, onBack }) {
   const entscheidungTreffen = async (variante) => {
     setActionLoading(true)
     try {
-      let url = `/nachtraege/${id}/entscheidung?variante=${variante}`
-      if (variante === 'A' && nt.betrag_gefordert) url += `&betrag_genehmigt=${nt.betrag_gefordert}`
-      await bpApi(url, { method: 'POST', token })
+      // Query-String aufbauen: variante immer, Betrag bei A, beide Begruendungen
+      // werden URL-encoded mitgeschickt (NT-F-04). Backend macht das BOOL-Mapping
+      // anhand der Variante und persistiert die TEXT-Begruendungen in
+      // nachtragspruefung Schritt 6 (Migration 008 Spalten).
+      const params = new URLSearchParams({ variante })
+      if (variante === 'A' && nt.betrag_gefordert) params.set('betrag_genehmigt', nt.betrag_gefordert)
+      if (begruendungGrund.trim()) params.set('begruendung_grund', begruendungGrund.trim())
+      if (begruendungHoehe.trim()) params.set('begruendung_hoehe', begruendungHoehe.trim())
+      await bpApi(`/nachtraege/${id}/entscheidung?${params.toString()}`, { method: 'POST', token })
+      // Begruendungen nach Erfolg zuruecksetzen, damit beim naechsten NT kein Cross-Leak
+      setBegruendungGrund(''); setBegruendungHoehe('')
       await laden()
     }
     catch (e) { setErr(e.detail || 'Fehler bei Entscheidung') }
@@ -1529,32 +1542,98 @@ function NachtragDetail({ id, onBack }) {
 
         // === TAB: Entscheidung ===
         activeTab === 'entscheidung' && h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
-          h('h3', { className: 'text-sm font-semibold text-white mb-5' }, 'Entscheidung \u2014 Variante w\u00E4hlen'),
-          h('div', { className: 'grid grid-cols-3 gap-3' },
-            [
-              { v: 'A', label: 'Genehmigt', desc: 'Vollst\u00E4ndig genehmigt. NTV wird automatisch angelegt.', color: 'green', icon: '\u2713' },
-              { v: 'B', label: 'Teilweise', desc: 'Teilweise genehmigt. Betrag muss angegeben werden.', color: 'amber', icon: '\u00BD' },
-              { v: 'C', label: 'Abgelehnt', desc: 'Nachtragsforderung wird zur\u00FCckgewiesen.', color: 'red', icon: '\u2717' },
-            ].map(opt => h('button', {
-              key: opt.v,
-              disabled: actionLoading || aktuell < 6,
-              onClick: () => entscheidungTreffen(opt.v),
-              className: 'text-left rounded-2xl p-5 transition-all border-2 border-white/5 hover:border-bp-400/50',
-              style: { background: '#1a1a1a', cursor: aktuell < 6 ? 'not-allowed' : 'pointer', opacity: aktuell < 6 ? 0.5 : 1 },
-            },
-              h('div', { className: 'flex items-center gap-3 mb-3' },
-                h('div', { className: 'w-9 h-9 rounded-xl flex items-center justify-center text-lg font-bold bg-white/5', style: { color: opt.color === 'green' ? '#4ade80' : opt.color === 'red' ? '#f87171' : '#f5a623' } }, opt.icon),
-                h('div', null,
-                  h('div', { className: 'text-lg font-bold text-white' }, `Variante ${opt.v}`),
-                  h('div', { className: 'text-xs font-semibold', style: { color: opt.color === 'green' ? '#4ade80' : opt.color === 'red' ? '#f87171' : '#f5a623' } }, opt.label),
+          h('h3', { className: 'text-sm font-semibold text-white mb-5' }, 'Entscheidung \u2014 dem Grunde / der H\u00F6he nach'),
+          // NT-F-04: Wenn die Entscheidung bereits gefallen ist (nachtragsvariante gesetzt),
+          // zeigen wir die gespeicherten Werte read-only an. Sonst die Eingabemaske.
+          (() => {
+            const s6 = schrittMap[6]
+            const entschieden = nt.nachtragsvariante != null
+            if (entschieden) {
+              // READ-ONLY-Ansicht der getroffenen Entscheidung
+              const grundJa = s6?.entscheidung_grund === true
+              const grundNein = s6?.entscheidung_grund === false
+              const hoeheJa = s6?.entscheidung_hoehe === true
+              const hoeheNein = s6?.entscheidung_hoehe === false
+              const bgVariante = nt.nachtragsvariante === 'A' ? 'rgba(74,222,128,0.10)'
+                : nt.nachtragsvariante === 'C' ? 'rgba(248,113,113,0.10)' : 'rgba(245,166,35,0.10)'
+              const borderVariante = nt.nachtragsvariante === 'A' ? 'rgba(74,222,128,0.30)'
+                : nt.nachtragsvariante === 'C' ? 'rgba(248,113,113,0.30)' : 'rgba(245,166,35,0.30)'
+              return h('div', { className: 'rounded-xl p-4', style: { background: bgVariante, border: `1px solid ${borderVariante}` } },
+                h('div', { className: 'flex items-center justify-between mb-3' },
+                  h('div', { className: 'text-base font-bold text-white' }, `Variante ${nt.nachtragsvariante}`),
+                  h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-400' },
+                    nt.nachtragsvariante === 'A' ? 'Genehmigt' : nt.nachtragsvariante === 'B' ? 'Teilweise' : 'Abgelehnt',
+                  ),
                 ),
+                // Dem Grunde nach
+                h('div', { className: 'mb-3' },
+                  h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-500 mb-1' }, 'Dem Grunde nach'),
+                  h('div', { className: 'text-sm font-semibold', style: { color: grundJa ? '#4ade80' : grundNein ? '#f87171' : '#9ca3af' } },
+                    grundJa ? '\u2713 Anerkannt' : grundNein ? '\u2717 Zur\u00FCckgewiesen' : '\u2014 nicht gesetzt',
+                  ),
+                  s6?.begruendung_grund && h('p', { className: 'text-xs text-gray-300 mt-1 whitespace-pre-wrap' }, s6.begruendung_grund),
+                ),
+                // Der Hoehe nach (nur wenn relevant, d.h. nicht Variante C)
+                nt.nachtragsvariante !== 'C' && h('div', null,
+                  h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-500 mb-1' }, 'Der H\u00F6he nach'),
+                  h('div', { className: 'text-sm font-semibold', style: { color: hoeheJa ? '#4ade80' : hoeheNein ? '#f5a623' : '#9ca3af' } },
+                    hoeheJa ? '\u2713 Anerkannt' : hoeheNein ? '\u26A0 Strittig / Nachverhandlung' : '\u2014 nicht gesetzt',
+                  ),
+                  s6?.begruendung_hoehe && h('p', { className: 'text-xs text-gray-300 mt-1 whitespace-pre-wrap' }, s6.begruendung_hoehe),
+                ),
+              )
+            }
+            // INPUT-Ansicht: zwei Textareas + 3 Karten
+            return h('div', null,
+              h('div', { className: 'mb-5' },
+                h('label', { className: 'block text-[11px] uppercase tracking-widest text-gray-500 mb-1.5' }, 'Begr\u00FCndung dem Grunde nach'),
+                h('textarea', {
+                  className: 'bp-input w-full px-3 py-2 rounded-lg text-xs',
+                  rows: 3,
+                  placeholder: 'Sachlich-faktische Begr\u00FCndung der Anerkennung bzw. Zur\u00FCckweisung dem Grunde nach (VOB/B). Wird im Protokoll und in der Beweisf\u00FChrung verwendet.',
+                  value: begruendungGrund,
+                  onChange: e => setBegruendungGrund(e.target.value),
+                  disabled: aktuell < 6,
+                }),
               ),
-              h('p', { className: 'text-xs text-gray-500 leading-relaxed' }, opt.desc),
-            )),
-          ),
-          h('div', { className: 'mt-4 px-4 py-2.5 rounded-lg bg-white/[.02] border border-white/5' },
-            h('span', { className: 'text-[11px] text-gray-500' }, '\u26A0\uFE0F Schritte 1\u20135 m\u00FCssen abgeschlossen sein, bevor eine Entscheidung getroffen werden kann. Nur Projektleitung und Admin d\u00FCrfen entscheiden.'),
-          ),
+              h('div', { className: 'mb-5' },
+                h('label', { className: 'block text-[11px] uppercase tracking-widest text-gray-500 mb-1.5' }, 'Begr\u00FCndung der H\u00F6he nach'),
+                h('textarea', {
+                  className: 'bp-input w-full px-3 py-2 rounded-lg text-xs',
+                  rows: 3,
+                  placeholder: 'Bei Variante B: Wor\u00FCber wird nachverhandelt? Bei Variante A: Preisangemessenheit kurz dokumentieren.',
+                  value: begruendungHoehe,
+                  onChange: e => setBegruendungHoehe(e.target.value),
+                  disabled: aktuell < 6,
+                }),
+              ),
+              h('div', { className: 'grid grid-cols-3 gap-3' },
+                [
+                  { v: 'A', label: 'Genehmigt', desc: 'Vollst\u00E4ndig genehmigt (Grund + H\u00F6he). NTV wird automatisch angelegt.', color: 'green', icon: '\u2713' },
+                  { v: 'B', label: 'Teilweise', desc: 'Dem Grunde nach anerkannt, H\u00F6he strittig / wird nachverhandelt.', color: 'amber', icon: '\u00BD' },
+                  { v: 'C', label: 'Abgelehnt', desc: 'Bereits dem Grunde nach zur\u00FCckgewiesen.', color: 'red', icon: '\u2717' },
+                ].map(opt => h('button', {
+                  key: opt.v,
+                  disabled: actionLoading || aktuell < 6,
+                  onClick: () => entscheidungTreffen(opt.v),
+                  className: 'text-left rounded-2xl p-5 transition-all border-2 border-white/5 hover:border-bp-400/50',
+                  style: { background: '#1a1a1a', cursor: aktuell < 6 ? 'not-allowed' : 'pointer', opacity: aktuell < 6 ? 0.5 : 1 },
+                },
+                  h('div', { className: 'flex items-center gap-3 mb-3' },
+                    h('div', { className: 'w-9 h-9 rounded-xl flex items-center justify-center text-lg font-bold bg-white/5', style: { color: opt.color === 'green' ? '#4ade80' : opt.color === 'red' ? '#f87171' : '#f5a623' } }, opt.icon),
+                    h('div', null,
+                      h('div', { className: 'text-lg font-bold text-white' }, `Variante ${opt.v}`),
+                      h('div', { className: 'text-xs font-semibold', style: { color: opt.color === 'green' ? '#4ade80' : opt.color === 'red' ? '#f87171' : '#f5a623' } }, opt.label),
+                    ),
+                  ),
+                  h('p', { className: 'text-xs text-gray-500 leading-relaxed' }, opt.desc),
+                )),
+              ),
+              h('div', { className: 'mt-4 px-4 py-2.5 rounded-lg bg-white/[.02] border border-white/5' },
+                h('span', { className: 'text-[11px] text-gray-500' }, '\u26A0\uFE0F Schritte 1\u20135 m\u00FCssen abgeschlossen sein. Nur Projektleitung und Admin d\u00FCrfen entscheiden. Die Begr\u00FCndungen werden in der Pr\u00FCfung Schritt 6 revisionssicher gespeichert.'),
+              ),
+            )
+          })(),
         ),
       ),
     ),
