@@ -593,8 +593,39 @@ function KontakteSeite() {
     showAdd && h(FirmaAddForm, { onSave: addFirma, onCancel: () => setShowAdd(false) }),
     loading ? h('p', { className: 'text-bp-muted text-sm py-8 text-center' }, 'Laden...')
     : firmen.length === 0 ? h('p', { className: 'text-bp-muted text-sm py-8 text-center' }, 'Keine Firmen angelegt.')
-    : h('div', { className: 'space-y-2' },
-        firmen.map(f => h('div', { key: f.id },
+    : (() => {
+        // K-01: Hierarchische Darstellung der Firmen gruppiert nach Vertragsverhaeltnis.
+        // Reihenfolge spiegelt die Bauprojekt-Hierarchie wider:
+        // Bauherr (BH) -> Nutzer -> Generalplaner und Fachbueros -> Generalunternehmer und Subs.
+        // Eine Firma ohne Rolle landet in "Sonstige".
+        const ROLLEN_REIHENFOLGE = [
+          { key: 'bauherr', label: 'Bauherr', icon: '🏛️' },
+          { key: 'nutzer', label: 'Nutzer', icon: '🔬' },
+          { key: 'generalplaner', label: 'Generalplaner & Fachbueros', icon: '📐' },
+          { key: 'fachbuero', label: 'Fachbueros (sub GP)', icon: '📐' },
+          { key: 'generalunternehmer', label: 'Generalunternehmer & Subs', icon: '🏗️' },
+          { key: 'subunternehmer', label: 'Subunternehmer', icon: '🏗️' },
+        ]
+        // Gruppieren — robust gegen unbekannte Rollen (landen in __rest)
+        const groups = {}
+        for (const f of firmen) {
+          const k = f.rolle || '__rest'
+          if (!groups[k]) groups[k] = []
+          groups[k].push(f)
+        }
+        // In definierte Reihenfolge bringen, dann unbekannte Rollen alphabetisch
+        // sortiert anhaengen, und ganz zum Schluss __rest.
+        const bekannteSchluessel = ROLLEN_REIHENFOLGE.map(r => r.key)
+        const unbekannte = Object.keys(groups)
+          .filter(k => !bekannteSchluessel.includes(k) && k !== '__rest')
+          .sort()
+        const allGroups = [
+          ...ROLLEN_REIHENFOLGE.filter(r => groups[r.key]?.length > 0),
+          ...unbekannte.map(k => ({ key: k, label: k, icon: '🏢' })),
+          ...(groups.__rest ? [{ key: '__rest', label: 'Ohne Rolle', icon: '❓' }] : []),
+        ]
+        // Eine wiederverwendbare Firma-Zeile als Funktion
+        const renderFirmaRow = (f) => h('div', { key: f.id },
           h('div', {
             className: 'bg-bp-card border border-white/5 rounded-lg p-4 cursor-pointer hover:border-white/10 transition',
             onClick: () => toggleDetail(f.id),
@@ -619,8 +650,21 @@ function KontakteSeite() {
                 )
               : h('p', { className: 'text-sm text-bp-muted' }, 'Keine Ansprechpartner hinterlegt.'),
           ),
-        )),
-      ),
+        )
+        return h('div', { className: 'space-y-6' },
+          allGroups.map(g => h('div', { key: g.key, className: 'space-y-2' },
+            // Gruppenkopf
+            h('div', { className: 'flex items-center gap-2 mb-2 mt-1' },
+              h('span', { className: 'text-sm' }, g.icon),
+              h('h3', { className: 'text-[11px] uppercase tracking-widest text-gray-500 font-semibold' }, g.label),
+              h('span', { className: 'text-[10px] text-gray-600' }, `(${(groups[g.key] || []).length})`),
+              h('span', { className: 'flex-1', style: { height: '1px', background: 'linear-gradient(90deg, rgba(255,255,255,0.08), transparent)', marginLeft: '8px' } }),
+            ),
+            // Firmenzeilen innerhalb der Gruppe alphabetisch nach Name
+            (groups[g.key] || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de')).map(renderFirmaRow),
+          )),
+        )
+      })(),
   )
 }
 
@@ -2573,6 +2617,16 @@ function AufgabeErstellen({ onClose, onCreated }) {
   const [frist, setFrist] = useState('')
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
+  // AE-03: Zustaendig-Dropdown statt Freitext. Wir laden die Benutzer-Liste
+  // einmalig beim Öffnen des Dialogs und merken den ausgewaehlten Eintrag.
+  const [benutzer, setBenutzer] = useState([])
+  const [zustaendigId, setZustaendigId] = useState('')
+
+  useEffect(() => {
+    bpApi('/auth/benutzer-liste', { token })
+      .then(r => setBenutzer(r.benutzer || []))
+      .catch(() => { /* Fehler still — Feld bleibt leer und ist optional */ })
+  }, [token])
 
   const submit = async (e) => {
     e.preventDefault(); setErr(''); setLoading(true)
@@ -2580,6 +2634,9 @@ function AufgabeErstellen({ onClose, onCreated }) {
       const body = { gegenstand, prioritaet }
       if (beschreibung) body.beschreibung = beschreibung
       if (frist) body.frist = frist
+      // AE-03: nur uebertragen, wenn ein Benutzer ausgewaehlt wurde.
+      // Backend akzeptiert das Feld optional (siehe aufgaben/schemas.py).
+      if (zustaendigId) body.zustaendig_benutzer_id = zustaendigId
       await bpApi('/aufgaben/?projekt=FLI', { method: 'POST', body, token })
       onCreated()
     } catch (e) { setErr(e.detail || 'Fehler') }
@@ -2609,6 +2666,19 @@ function AufgabeErstellen({ onClose, onCreated }) {
           ),
         ),
         h(Input, { label: 'Frist', type: 'date', value: frist, onChange: e => setFrist(e.target.value) }),
+      ),
+      // AE-03: Zustaendigkeit per Dropdown. Optional \u2014 Aufgaben ohne
+      // Zustaendigen sind weiterhin moeglich (z.B. zur spaeteren Zuweisung).
+      h('div', { className: 'mb-4' },
+        h('label', { className: 'block text-sm text-bp-muted mb-1.5' }, 'Zust\u00E4ndig (optional)'),
+        h('select', {
+          className: 'bp-input w-full px-4 py-3 rounded-lg text-sm',
+          value: zustaendigId,
+          onChange: e => setZustaendigId(e.target.value),
+        },
+          h('option', { value: '' }, '\u2014 niemandem zugewiesen \u2014'),
+          benutzer.map(b => h('option', { key: b.id, value: b.id }, b.anzeige_name)),
+        ),
       ),
       h('div', { className: 'flex gap-3' },
         h('button', { type: 'submit', className: 'bp-btn px-6 py-2.5 rounded-lg text-sm', disabled: loading }, loading ? 'Wird erstellt...' : 'Aufgabe erstellen'),

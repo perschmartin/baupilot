@@ -23,6 +23,10 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from database import get_db
 
 from auth.dependencies import (
     CurrentUser,
@@ -164,6 +168,45 @@ def me(user: CurrentUser, service: AuthService = Depends(get_auth_service)):
         return service.lade_profil(benutzer_id=UUID(user["sub"]))
     except AuthError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+# === BENUTZER-LISTE (AE-03 — Aufgaben-Zuweisung per Dropdown) ===
+
+@router.get("/benutzer-liste")
+def benutzer_liste(
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """Listet aktive Benutzer fuer Zuweisungs-Dropdowns (AE-03).
+
+    Liefert nur die im Frontend benoetigten Felder. Inaktive oder gesperrte
+    Konten werden ausgeschlossen — sie sollen in einem Auswahl-Dropdown nicht
+    erscheinen. Sortierung nach Nachname/Vorname fuer eine alphabetische Liste.
+    """
+    rows = db.execute(
+        text("""
+            SELECT id, vorname, nachname, email
+            FROM shared.benutzer
+            WHERE (gesperrt_bis IS NULL OR gesperrt_bis < NOW())
+            ORDER BY nachname, vorname, email
+        """),
+    ).mappings().all()
+    return {
+        "benutzer": [
+            {
+                "id": r["id"],
+                "vorname": r["vorname"] or "",
+                "nachname": r["nachname"] or "",
+                "email": r["email"],
+                "anzeige_name": (
+                    f"{(r['vorname'] or '').strip()} {(r['nachname'] or '').strip()}".strip()
+                    or r["email"]
+                ),
+            }
+            for r in rows
+        ],
+        "gesamt": len(rows),
+    }
 
 
 # === PASSWORT (erlaubt mit eingeschraenktem Token) ===
