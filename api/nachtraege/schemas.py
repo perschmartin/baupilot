@@ -132,8 +132,26 @@ class NachtragDetailResponse(NachtragResponse):
 # LV-Abgleich
 # ---------------------------------------------------------------------------
 
+class GenehmigterNT(BaseModel):
+    """Bereits genehmigter Nachtrag an einer LV-Position.
+
+    Wird je LVTreffer mitgegeben (NT-F-02 Doppelbeauftragungspruefung).
+    Quelle: nachtragspruefung.ki_ergebnis.treffer[].lv_position_id mit
+    Bestaetigungs-Gate (ki_bestaetigt=TRUE) und Vorgangsstatus 'genehmigt'.
+    """
+    vorgang_id: UUID
+    nummer: str
+    betrag_genehmigt: float | None = None
+    status: str  # vorgangstatus-Enum als String
+
+
 class LVTreffer(BaseModel):
-    """Treffer beim LV-Abgleich."""
+    """Treffer beim LV-Abgleich.
+
+    Das Feld bereits_genehmigte_nts (NT-F-02) listet alle anderen Nachtraege,
+    die an genau dieser LV-Position bereits dem Grunde nach genehmigt wurden.
+    Leere Liste = keine Doppelbeauftragungs-Gefahr.
+    """
     lv_position_id: UUID
     oz: str
     kurztext: str
@@ -144,6 +162,7 @@ class LVTreffer(BaseModel):
     lv_nummer: str | None = None
     relevanz: float = 0.0
     methode: str = "exakt"
+    bereits_genehmigte_nts: list[GenehmigterNT] = []
 
 
 class LVAbgleichResponse(BaseModel):

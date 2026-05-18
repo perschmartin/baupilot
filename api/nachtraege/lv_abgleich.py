@@ -57,12 +57,83 @@ class LVAbgleichService:
 
         treffer = self._exakte_suche(such, vorgang.get("lv_id"), limit)
 
+        # NT-F-02 Doppelbeauftragungspruefung: pro Treffer alle bereits
+        # genehmigten anderen Nachtraege an derselben LV-Position nachladen.
+        # Wird als Liste in jedem Treffer-Dict unter 'bereits_genehmigte_nts'
+        # zurueckgegeben. Leere Liste = keine Konfliktwarnung im Frontend.
+        if treffer:
+            self._angereichern_mit_genehmigten_nts(treffer, vorgang_id)
+
         return {
             "vorgang_id": vorgang_id,
             "treffer": treffer,
             "anzahl_treffer": len(treffer),
             "suchbegriff": such,
         }
+
+    def _angereichern_mit_genehmigten_nts(
+        self,
+        treffer: list[dict[str, Any]],
+        aktueller_vorgang_id: UUID,
+    ) -> None:
+        """NT-F-02: Pro Treffer ermitteln, ob es bereits genehmigte Nachtraege
+        an genau derselben LV-Position gibt.
+
+        Quelle: nachtragspruefung.ki_ergebnis.treffer[].lv_position_id mit
+        ki_bestaetigt=TRUE (Bestaetigungs-Gate aus B-002). Der aktuelle Vorgang
+        wird ausgeschlossen, damit ein NT sich nicht selbst als „bereits
+        genehmigt" meldet.
+
+        Mutiert die uebergebene treffer-Liste in-place. Effizient als
+        Batch-Query mit einem CROSS JOIN LATERAL gegen jsonb_array_elements.
+        """
+        if not treffer:
+            return
+
+        # Alle gefundenen LV-Position-IDs sammeln (als Strings, weil JSON
+        # die UUIDs als Text-Werte abspeichert).
+        pos_ids = [str(t["lv_position_id"]) for t in treffer]
+
+        # Batch-Query: alle Zuordnungen NT -> LV-Position aus dem Pruefschritt 2,
+        # die bestaetigt UND fuer einen genehmigten Vorgang sind.
+        rows = self.db.execute(
+            text("""
+                SELECT
+                    (t.elem ->> 'lv_position_id')::uuid AS lv_position_id,
+                    v.id AS vorgang_id,
+                    v.nummer AS nummer,
+                    v.betrag_genehmigt AS betrag_genehmigt,
+                    v.status::text AS status
+                FROM nachtragspruefung np
+                JOIN vorgaenge v ON v.id = np.vorgang_id
+                CROSS JOIN LATERAL jsonb_array_elements(np.ki_ergebnis -> 'treffer') AS t(elem)
+                WHERE np.schritt = 2
+                  AND np.ki_bestaetigt = TRUE
+                  AND v.status = 'genehmigt'
+                  AND v.id <> :aktueller_vorgang_id
+                  AND (t.elem ->> 'lv_position_id') = ANY(:pos_ids)
+            """),
+            {
+                "aktueller_vorgang_id": str(aktueller_vorgang_id),
+                "pos_ids": pos_ids,
+            },
+        ).mappings().all()
+
+        # In ein Dict gruppieren: lv_position_id -> list[GenehmigterNT-dict]
+        from collections import defaultdict
+        per_position: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for r in rows:
+            per_position[str(r["lv_position_id"])].append({
+                "vorgang_id": r["vorgang_id"],
+                "nummer": r["nummer"],
+                "betrag_genehmigt": float(r["betrag_genehmigt"]) if r["betrag_genehmigt"] is not None else None,
+                "status": r["status"],
+            })
+
+        # An jedes Treffer-Dict anhaengen. Wenn keine Genehmigung gefunden,
+        # bleibt es eine leere Liste — das Frontend rendert dann keine Warnung.
+        for t in treffer:
+            t["bereits_genehmigte_nts"] = per_position.get(str(t["lv_position_id"]), [])
 
     def _exakte_suche(
         self,
