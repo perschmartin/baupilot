@@ -1266,6 +1266,25 @@ function NachtragDetail({ id, onBack }) {
         aktuell === 6 && h('button', { className: 'bp-btn w-full px-3 py-2 rounded-lg text-xs mt-4', onClick: () => setActiveTab('entscheidung') }, '\u25B6 Entscheidung treffen'),
         // Schritt 7: Abschluss (manuell)
         aktuell === 7 && h('div', { className: 'mt-4 flex flex-col gap-2' },
+          // NT-F-05: Wenn bei Variante A automatisch ein NTV-Vorgang angelegt wurde,
+          // hier die NTV-Nummer anzeigen. Die Nummer wird aus der NT-Nummer abgeleitet
+          // (Backend-Konvention service.py:671 \u2014 NT-XXX -> NTV-XXX). Bei vorhandenem
+          // ntv_id ist die Anlage garantiert erfolgt.
+          nt.ntv_id && h('div', {
+            className: 'rounded-lg p-3 mb-2',
+            style: { background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.25)' },
+          },
+            h('div', { className: 'text-[10px] uppercase tracking-widest text-green-300/80 mb-1' }, 'Nachtragsvereinbarung'),
+            h('div', { className: 'flex items-center justify-between gap-2' },
+              h('div', { className: 'text-sm font-bold font-mono text-green-300' },
+                (nt.nummer || '').replace('NT-', 'NTV-'),
+              ),
+              h('span', { className: 'text-[10px] text-gray-500 font-mono', title: 'Interne NTV-ID' },
+                nt.ntv_id.toString().substring(0, 8) + '\u2026',
+              ),
+            ),
+            h('p', { className: 'text-[11px] text-gray-400 mt-1' }, 'Automatisch angelegt nach Variante A.'),
+          ),
           h('p', { className: 'text-[11px] text-gray-400' }, 'Terminplan-Auswirkung und Abschlussvermerk dokumentieren:'),
           h('textarea', { className: 'bp-input w-full px-3 py-2 rounded-lg text-xs', rows: 3, placeholder: 'z.B. "Terminplanauswirkung: +12 AT auf Gewerk TGA. Nachtrag dokumentiert und archiviert."', value: schrittKommentar, onChange: e => setSchrittKommentar(e.target.value) }),
           h('button', { className: 'bp-btn w-full px-3 py-2 rounded-lg text-xs', disabled: actionLoading || !schrittKommentar.trim(), onClick: () => schrittAbschliessen(7, schrittKommentar) }, actionLoading ? 'L\u00E4uft...' : '\u2713 Nachtrag abschlie\u00DFen'),
@@ -1447,26 +1466,58 @@ function NachtragDetail({ id, onBack }) {
                 h('div', { className: 'text-xl font-bold font-mono text-white mt-1' }, kostenDaten.bki_regionalfaktor || '\u2014'),
               ),
             ),
-            // Vergleiche
-            kostenDaten.vergleiche && kostenDaten.vergleiche.map((v, i) => h('div', {
-              key: i,
-              className: 'flex justify-between items-center px-4 py-3 rounded-xl mb-2',
-              style: {
-                background: v.bewertung === 'angemessen' ? 'rgba(74,222,128,0.08)' : 'rgba(248,113,113,0.08)',
-                border: `1px solid ${v.bewertung === 'angemessen' ? 'rgba(74,222,128,0.12)' : 'rgba(248,113,113,0.12)'}`,
+            // Vergleiche \u2014 NT-F-03: Aufschluesselung mit drei Spalten
+            //   Referenz | Gefordert | Abweichung (absolut + prozentual)
+            // Der \u201Egeforderte" Wert wird pro Vergleich aus dem Referenzpreis und der
+            // Abweichung in Prozent rueckgerechnet \u2014 die Daten kommen heute noch nicht
+            // pro Position aus dem Backend (Etappe 5/Migration 009 wird das aendern).
+            // Die Berechnung ist algebraisch: gefordert = referenz * (1 + abw/100).
+            kostenDaten.vergleiche && kostenDaten.vergleiche.map((v, i) => {
+              const ref = v.referenzpreis_regionalisiert ?? v.referenzpreis_netto
+              const abwPct = v.abweichung_prozent
+              const gefordert = (ref != null && abwPct != null) ? ref * (1 + abwPct / 100) : null
+              const deltaAbs = (ref != null && gefordert != null) ? gefordert - ref : null
+              const farbe = v.bewertung === 'angemessen' ? '#4ade80' : '#f87171'
+              const bg = v.bewertung === 'angemessen' ? 'rgba(74,222,128,0.08)' : 'rgba(248,113,113,0.08)'
+              const border = v.bewertung === 'angemessen' ? 'rgba(74,222,128,0.18)' : 'rgba(248,113,113,0.18)'
+              return h('div', {
+                key: i,
+                className: 'px-4 py-3 rounded-xl mb-2',
+                style: { background: bg, border: `1px solid ${border}` },
               },
-            },
-              h('div', null,
-                h('div', { className: 'text-xs font-medium text-white' }, `${v.quelle}: ${v.bezeichnung}`),
-                h('div', { className: 'text-[11px] text-gray-500 mt-0.5' }, `Referenzpreis: ${EUR(v.referenzpreis_regionalisiert || v.referenzpreis_netto)}`),
-              ),
-              h('div', { className: 'text-right' },
-                h('div', { className: 'text-base font-bold font-mono', style: { color: v.bewertung === 'angemessen' ? '#4ade80' : '#f87171' } },
-                  v.abweichung_prozent != null ? `${v.abweichung_prozent > 0 ? '+' : ''}${Number(v.abweichung_prozent).toLocaleString('de-DE')}%` : '\u2014',
+                // Zeile 1: Quelle + Bezeichnung
+                h('div', { className: 'text-xs font-medium text-white mb-2' }, `${v.quelle}: ${v.bezeichnung}`),
+                // Zeile 2: 3-Spalten-Grid Referenz | Gefordert | Abweichung
+                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }, className: 'items-center' },
+                  // Referenz
+                  h('div', null,
+                    h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-500' }, 'Referenz' + (v.referenzpreis_regionalisiert != null ? ' (regional)' : '')),
+                    h('div', { className: 'text-sm font-mono font-semibold text-white mt-0.5' }, EUR(ref) + (v.einheit ? ` / ${v.einheit}` : '')),
+                  ),
+                  // Gefordert
+                  h('div', null,
+                    h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-500' }, 'Gefordert'),
+                    h('div', { className: 'text-sm font-mono font-semibold mt-0.5', style: { color: farbe } },
+                      gefordert != null ? EUR(gefordert) : '\u2014',
+                    ),
+                  ),
+                  // Abweichung absolut + prozentual
+                  h('div', { className: 'text-right' },
+                    h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-500' }, 'Abweichung'),
+                    h('div', { className: 'text-base font-bold font-mono mt-0.5', style: { color: farbe } },
+                      abwPct != null ? `${abwPct > 0 ? '+' : ''}${Number(abwPct).toLocaleString('de-DE', { maximumFractionDigits: 1 })} %` : '\u2014',
+                    ),
+                    deltaAbs != null && h('div', { className: 'text-[10px] font-mono mt-0.5', style: { color: farbe } },
+                      `${deltaAbs > 0 ? '+' : ''}${EUR(deltaAbs)}`,
+                    ),
+                  ),
                 ),
-                h('div', { className: 'text-[10px]', style: { color: v.bewertung === 'angemessen' ? '#4ade80' : '#f87171' } }, v.bewertung === 'angemessen' ? 'angemessen' : '\u00FCber Bandbreite'),
-              ),
-            )),
+                // Zeile 3: Bewertungs-Label
+                h('div', { className: 'text-[10px] mt-2', style: { color: farbe } },
+                  v.bewertung === 'angemessen' ? '\u2713 Innerhalb BKI-Bandbreite' : '\u26A0 \u00DCber Bandbreite (Erl\u00E4uterung erforderlich)',
+                ),
+              )
+            }),
             kostenDaten.vergleiche && kostenDaten.vergleiche.length === 0 && h('div', { className: 'text-gray-500 text-sm text-center py-4' }, 'Keine Vergleichspositionen gefunden.'),
           ) : h('div', { className: 'text-gray-500 text-sm text-center py-8' }, 'Kostenabgleich noch nicht durchgef\u00FChrt.'),
           // KI-Buttons
