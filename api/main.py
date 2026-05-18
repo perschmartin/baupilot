@@ -24,6 +24,7 @@ from dokumente import dokumente_router
 from lv_extraktion import lv_router
 from nachtraege import nachtraege_router
 from behinderungen import behinderungen_router
+from bedenken import bedenken_router
 
 structlog.configure(
     processors=[
@@ -113,3 +114,4 @@ app.include_router(dokumente_router)
 app.include_router(lv_router)
 app.include_router(nachtraege_router)
 app.include_router(behinderungen_router)
+app.include_router(bedenken_router)

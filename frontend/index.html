@@ -671,6 +671,9 @@ function VorgaengeSeite({ typ, label }) {
   if (selected && typ === 'behinderungsanzeige') {
     return h(BehinderungDetail, { id: selected, onBack: () => setSelected(null) })
   }
+  if (selected && typ === 'bedenkenanzeige') {
+    return h(BedenkenDetail, { id: selected, onBack: () => setSelected(null) })
+  }
 
   const laden = useCallback(async () => {
     setLoading(true)
@@ -722,11 +725,11 @@ function VorgaengeSeite({ typ, label }) {
         vorgaenge.map(v =>
           h('div', {
             key: v.id,
-            // AP 2.2a Drill-Down: bei Behinderungen Klick aktiv. Andere Typen bleiben read-only
-            // (Bedenken/Maengel bekommen ihren Drill-Down in spaeteren Etappen).
-            onClick: typ === 'behinderungsanzeige' ? () => setSelected(v.id) : undefined,
+            // AP 2.2 Drill-Down: aktiv fuer Behinderungen (E6) und Bedenken (E7).
+            // Maengel bekommen ihren Drill-Down in E8.
+            onClick: ['behinderungsanzeige', 'bedenkenanzeige'].includes(typ) ? () => setSelected(v.id) : undefined,
             className: 'grid grid-cols-12 gap-2 px-4 py-3 rounded-lg bg-bp-card border border-white/5 hover:border-white/10 transition items-center'
-              + (typ === 'behinderungsanzeige' ? ' cursor-pointer' : ''),
+              + (['behinderungsanzeige', 'bedenkenanzeige'].includes(typ) ? ' cursor-pointer' : ''),
           },
             h('div', { className: 'col-span-2 font-mono text-sm text-bp-400' }, v.nummer),
             h('div', { className: 'col-span-8 text-sm text-white truncate' }, v.gegenstand),
@@ -917,6 +920,208 @@ function _placeholderFuerSchritt(nr) {
     4: 'Schriftverkehr: Wer wurde wann wie informiert?',
     5: 'Erneute Pruefung nach Schriftverkehr/Stellungnahme.',
     6: 'Abmeldung GU dokumentiert. Behinderungsphase abgeschlossen.',
+  }
+  return t[nr] || ''
+}
+
+
+// ================================================================
+// BEDENKEN-DETAIL (AP 2.2b)
+// ================================================================
+// Gleicher 6-Schritte-Workflow wie Behinderungen (VOB/B §4 Abs. 3).
+// Unterschiede zu BehinderungDetail:
+//   - LV-Position-Zuordnung (lv_id) wird angezeigt
+//   - gewaehrleistung_bis (DATE) ist editierbar (PATCH-Endpoint)
+//   - Schritt-Placeholder-Texte sind bedenken-spezifisch (Bedenken statt
+//     Behinderung — sachlich-rechtliche Argumentation gegenueber dem AG)
+
+const BED_SCHRITT_LABELS = [
+  'Erfassung', 'Pruefung', 'Anerkennung/Rueckweisung',
+  'Schriftverkehr', 'Erneute Pruefung', 'Abmeldung GU',
+]
+
+function BedenkenDetail({ id, onBack }) {
+  const { token } = useAuth()
+  const [bed, setBed] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+  const [actionLoading, setActionLoading] = useState(false)
+  const [schrittKommentar, setSchrittKommentar] = useState('')
+  // Lokaler State fuer das Bearbeiten der Gewaehrleistung. Beim Wechsel
+  // des Bedenken-Datensatzes setzen wir es zurueck (siehe useEffect unten).
+  const [gewBis, setGewBis] = useState('')
+
+  const laden = useCallback(async () => {
+    setLoading(true)
+    try {
+      const r = await bpApi(`/bedenken/${id}`, { token })
+      setBed(r)
+      setGewBis(r.gewaehrleistung_bis || '')
+    } catch (e) { setErr(e.detail || 'Fehler beim Laden') }
+    setLoading(false)
+  }, [id, token])
+
+  useEffect(() => { laden() }, [laden])
+
+  const schrittAbschliessen = async (nr, ergebnis) => {
+    if (!ergebnis || !ergebnis.trim()) { setErr('Bitte Ergebnis eingeben.'); return }
+    setActionLoading(true)
+    try {
+      await bpApi(`/bedenken/${id}/schritt/${nr}`, { method: 'POST', body: { ergebnis: ergebnis.trim() }, token })
+      setSchrittKommentar('')
+      await laden()
+    } catch (e) { setErr(e.detail || 'Fehler beim Abschluss') }
+    setActionLoading(false)
+  }
+
+  const gewaehrleistungSpeichern = async () => {
+    setActionLoading(true)
+    try {
+      // gewaehrleistung_bis=null entfernt das Datum; ein leeres String-Feld
+      // wird als null gesendet (PATCH-Body), damit der Backend-Service das
+      // Feld korrekt nullen kann.
+      await bpApi(`/bedenken/${id}`, { method: 'PATCH', body: { gewaehrleistung_bis: gewBis || null }, token })
+      await laden()
+    } catch (e) { setErr(e.detail || 'Fehler beim Speichern der Gewaehrleistungsfrist') }
+    setActionLoading(false)
+  }
+
+  if (loading) return h('p', { className: 'text-bp-muted py-8 text-center' }, 'Laden...')
+  if (!bed) return h('p', { className: 'text-red-400 py-8 text-center' }, err || 'Bedenken nicht gefunden')
+
+  const schrittMap = {}
+  for (const s of (bed.pruefschritte || [])) schrittMap[s.schritt] = s
+  const aktuell = bed.aktueller_schritt || 0
+  const naechsterSchritt = Math.min(aktuell + 1, 6)
+
+  return h('div', { className: 'fade-in' },
+    h('div', { className: 'flex items-center gap-3 mb-4' },
+      h('button', { onClick: onBack, className: 'text-xs text-bp-muted hover:text-white' }, '← Zurueck zur Liste'),
+      h('span', { className: 'text-xs text-gray-600' }, '/'),
+      h('span', { className: 'text-xs font-mono text-bp-400' }, bed.nummer),
+    ),
+    h('div', { className: 'flex items-center justify-between mb-6' },
+      h('div', null,
+        h('h2', { className: 'text-lg font-semibold text-white' }, '🔍 ' + bed.gegenstand),
+        h('p', { className: 'text-xs text-bp-muted mt-1' }, 'Bedenkenanzeige nach VOB/B §4 Abs. 3 · Status: ' + (STATUS_LABELS[bed.status] || bed.status)),
+      ),
+      err && h('span', { className: 'text-xs text-red-400' }, err),
+    ),
+    h('div', { style: { display: 'grid', gridTemplateColumns: '280px 1fr', gap: '20px' } },
+      // === STEPPER-SIDEBAR ===
+      h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
+        h('h3', { className: 'text-xs uppercase tracking-widest text-gray-500 mb-4' }, 'Pruefschritte'),
+        h('div', { className: 'flex flex-col gap-2' },
+          BED_SCHRITT_LABELS.map((lbl, i) => {
+            const nr = i + 1
+            const s = schrittMap[nr]
+            const done = s && s.abgeschlossen
+            const isAktuell = nr === naechsterSchritt && !done
+            const dotBg = done ? '#4ade80' : isAktuell ? '#f5a623' : '#374151'
+            const txtCol = done ? 'text-white' : isAktuell ? 'text-amber-300' : 'text-gray-500'
+            return h('div', { key: nr, className: 'flex items-start gap-3' },
+              h('div', { className: 'mt-1', style: { width: '12px', height: '12px', borderRadius: '50%', background: dotBg, border: '2px solid #1a1a1a', boxShadow: isAktuell ? '0 0 0 2px rgba(245,166,35,0.3)' : 'none' } }),
+              h('div', { className: 'flex-1 min-w-0' },
+                h('div', { className: `text-xs font-semibold ${txtCol}` }, `${nr}. ${lbl}`),
+                s?.abgeschlossen_am && h('div', { className: 'text-[10px] text-gray-500 mt-0.5' }, new Date(s.abgeschlossen_am).toLocaleString('de-DE')),
+                done && s?.ergebnis && h('div', { className: 'text-[11px] text-gray-400 mt-1 whitespace-pre-wrap' }, s.ergebnis),
+              ),
+            )
+          }),
+        ),
+        aktuell < 6 && h('div', { className: 'mt-5 pt-5 border-t border-white/5' },
+          h('p', { className: 'text-[11px] text-gray-400 mb-2' }, `Schritt ${naechsterSchritt} (${BED_SCHRITT_LABELS[naechsterSchritt - 1]}) abschliessen:`),
+          h('textarea', {
+            className: 'bp-input w-full px-3 py-2 rounded-lg text-xs',
+            rows: 3,
+            placeholder: _bedPlaceholder(naechsterSchritt),
+            value: schrittKommentar,
+            onChange: e => setSchrittKommentar(e.target.value),
+          }),
+          h('button', {
+            className: 'bp-btn w-full px-3 py-2 rounded-lg text-xs mt-2',
+            disabled: actionLoading || !schrittKommentar.trim(),
+            onClick: () => schrittAbschliessen(naechsterSchritt, schrittKommentar),
+          }, actionLoading ? 'Laeuft...' : `✓ Schritt ${naechsterSchritt} abschliessen`),
+          [3, 6].includes(naechsterSchritt) && h('p', { className: 'text-[10px] text-amber-400/80 mt-2' }, '⚠ Nur Projektleitung und Admin'),
+        ),
+        aktuell >= 6 && h('div', { className: 'mt-5 pt-5 border-t border-white/5 rounded-lg p-3', style: { background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.25)' } },
+          h('div', { className: 'text-sm font-semibold text-green-300' }, '✓ Alle Schritte abgeschlossen'),
+          h('p', { className: 'text-[11px] text-gray-400 mt-1' }, 'Bedenken als erledigt dokumentiert.'),
+        ),
+      ),
+      // === CONTENT — Stammdaten + LV-Bezug + Gewaehrleistung + Dreiklang ===
+      h('div', null,
+        h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5 mb-4' },
+          h('h3', { className: 'text-sm font-semibold text-white mb-4' }, 'Stammdaten'),
+          h('div', { className: 'grid grid-cols-2 gap-3 text-xs' },
+            _stamm('Nummer', bed.nummer || '—'),
+            _stamm('Status', STATUS_LABELS[bed.status] || bed.status),
+            _stamm('Prioritaet', bed.prioritaet || '—'),
+            _stamm('Frist', bed.frist ? new Date(bed.frist).toLocaleDateString('de-DE') : '—'),
+            // AP 2.2b: LV-Zuordnung sichtbar machen — Volltext in spaeteren Etappen.
+            _stamm('LV-Bezug', bed.lv_id ? bed.lv_id.toString().substring(0, 8) + '…' : '— keine Zuordnung'),
+            _stamm('Erstellt am', bed.erstellt_am ? new Date(bed.erstellt_am).toLocaleString('de-DE') : '—'),
+          ),
+          bed.beschreibung && h('div', { className: 'mt-4 pt-4 border-t border-white/5' },
+            h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1.5' }, 'Beschreibung'),
+            h('p', { className: 'text-xs text-gray-300 whitespace-pre-wrap' }, bed.beschreibung),
+          ),
+        ),
+        // Gewaehrleistungsfrist (editierbar) — bedenken-spezifisch, Migration 008.
+        h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5 mb-4' },
+          h('h3', { className: 'text-sm font-semibold text-white mb-2' }, 'Gewaehrleistungsfrist'),
+          h('p', { className: 'text-[11px] text-gray-500 mb-3' }, 'Wenn das Bedenken nicht ausgeraeumt wird und der GU trotzdem ausfuehrt, verlaengert oder begrenzt sich die Gewaehrleistung. Hier das relevante Datum hinterlegen.'),
+          h('div', { className: 'flex items-end gap-2' },
+            h('input', {
+              type: 'date',
+              className: 'bp-input px-3 py-2 rounded-lg text-xs',
+              value: gewBis || '',
+              onChange: e => setGewBis(e.target.value),
+            }),
+            h('button', {
+              className: 'bp-btn px-3 py-2 rounded-lg text-xs',
+              disabled: actionLoading,
+              onClick: gewaehrleistungSpeichern,
+            }, actionLoading ? '…' : '💾 Speichern'),
+            bed.gewaehrleistung_bis && h('span', { className: 'text-[11px] text-gray-400' }, 'aktuell: ' + new Date(bed.gewaehrleistung_bis).toLocaleDateString('de-DE')),
+          ),
+        ),
+        h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
+          h('h3', { className: 'text-sm font-semibold text-white mb-4' }, 'Dreiklang Q/Z/K'),
+          h('div', { className: 'grid grid-cols-3 gap-3' },
+            h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
+              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Qualitaet'),
+              h('div', { className: 'text-sm text-white' }, bed.qualitaet_bewertung || '—'),
+            ),
+            h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
+              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Zeit'),
+              h('div', { className: 'text-base font-bold font-mono text-white' },
+                bed.zeit_arbeitstage != null ? `${bed.zeit_arbeitstage > 0 ? '+' : ''}${bed.zeit_arbeitstage} AT` : '—',
+              ),
+            ),
+            h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
+              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Kosten'),
+              h('div', { className: 'text-base font-bold font-mono text-white' },
+                bed.kosten_eur != null ? EUR(bed.kosten_eur) : '—',
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  )
+}
+
+// Hilfsfunktion: bedenken-spezifischer Placeholder pro Schritt.
+function _bedPlaceholder(nr) {
+  const t = {
+    1: 'Eingang des Bedenkens dokumentieren. Wer, wann, welche Anlagen.',
+    2: 'Sachlich-fachliche Pruefung des Bedenkens. Ist der Einwand begruendet?',
+    3: 'Anerkennung des Bedenkens oder Rueckweisung mit Begruendung (VOB/B §4 Abs. 3).',
+    4: 'Schriftverkehr und Stellungnahmen dokumentieren.',
+    5: 'Erneute Pruefung nach Schriftverkehr/Klarstellung.',
+    6: 'Abmeldung des Bedenkens. Beweissicherung abgeschlossen.',
   }
   return t[nr] || ''
 }
