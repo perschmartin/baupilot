@@ -11,15 +11,34 @@ from starlette.responses import JSONResponse, Response
 logger = structlog.get_logger()
 TENANT_HEADER = "X-Tenant-Slug"
 REQUEST_ID_HEADER = "X-Request-ID"
-# Pfade, die keinen Tenant benoetigen
+# Pfade, die keinen Tenant-Header benoetigen.
+# Wenn ein neues Backend-Modul angelegt wird, MUSS hier sein Pfad-Praefix
+# eingetragen werden — sonst lehnt die Middleware alle Requests mit HTTP 400
+# ab, bevor sie den Router erreichen (war urspruengliches Verhalten in
+# §B-003, Schema-per-Tenant mit benutzer_projekt_rollen.mandant_slug als
+# eigentlicher Identitaetsquelle — der Header wird derzeit nicht aktiv genutzt).
 TENANT_EXEMPT_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc"}
+TENANT_EXEMPT_PREFIXES = (
+    "/api/v1/auth",
+    "/api/v1/aufgaben",
+    "/api/v1/vorgaenge",
+    "/api/v1/kontakte",
+    "/api/v1/dokumente",
+    "/api/v1/lv",
+    "/api/v1/nachtraege",
+    "/api/v1/behinderungen",    # E6, AP 2.2a
+    "/api/v1/bedenken",         # E7, AP 2.2b
+    "/api/v1/maengel",          # E8, AP 2.2c
+    "/api/v1/benachrichtigungen",  # E10, B-012
+    "/api/v1/tags",             # E11, B-013
+)
 class TenantMiddleware(BaseHTTPMiddleware):
     """Extrahiert den Mandanten-Slug aus dem Request-Header."""
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         path = request.url.path
-        if path in TENANT_EXEMPT_PATHS or path.startswith("/api/v1/auth") or path.startswith("/api/v1/aufgaben") or path.startswith("/api/v1/vorgaenge") or path.startswith("/api/v1/kontakte") or path.startswith("/api/v1/dokumente") or path.startswith("/api/v1/lv") or path.startswith("/api/v1/nachtraege"):
+        if path in TENANT_EXEMPT_PATHS or any(path.startswith(p) for p in TENANT_EXEMPT_PREFIXES):
             return await call_next(request)
         tenant_slug = request.headers.get(TENANT_HEADER)
         if not tenant_slug:
