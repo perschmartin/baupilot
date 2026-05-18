@@ -707,20 +707,15 @@ function VorgaengeSeite({ typ, label }) {
   const [suche, setSuche] = useState('')
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
-  // AP 2.2a: Drill-Down auf BehinderungDetail. Aktuell nur fuer
-  // typ='behinderungsanzeige' aktiv; Bedenken/Maengel folgen in eigenen Etappen.
+  // AP 2.2: Drill-Down auf BehinderungDetail / BedenkenDetail / MangelDetail.
   const [selected, setSelected] = useState(null)
   const config = TYP_CONFIG[typ] || TYP_CONFIG.nachtrag
 
-  if (selected && typ === 'behinderungsanzeige') {
-    return h(BehinderungDetail, { id: selected, onBack: () => setSelected(null) })
-  }
-  if (selected && typ === 'bedenkenanzeige') {
-    return h(BedenkenDetail, { id: selected, onBack: () => setSelected(null) })
-  }
-  if (selected && typ === 'mangelanzeige') {
-    return h(MangelDetail, { id: selected, onBack: () => setSelected(null) })
-  }
+  // ACHTUNG (E6-Bug-Fix): die conditional Returns fuer die Detail-Komponenten
+  // MUESSEN nach allen Hooks (useCallback, useEffect) stehen. Sonst aendert
+  // sich die Hook-Reihenfolge zwischen den Renders und React crashed die
+  // ganze Komponente (Rules of Hooks). Siehe Memory baupilot_tenant_middleware.md
+  // fuer aehnliche Fallen.
 
   const laden = useCallback(async () => {
     setLoading(true)
@@ -735,6 +730,19 @@ function VorgaengeSeite({ typ, label }) {
   }, [token, filter, suche, typ])
 
   useEffect(() => { laden() }, [laden])
+
+  // Conditional Returns NACH allen Hooks — sonst Hook-Order-Verstoss (siehe
+  // Kommentar oben an der Komponente). Diese drei Returns fuehren in die
+  // jeweilige Stoerungs-Detailseite (AP 2.2 a/b/c).
+  if (selected && typ === 'behinderungsanzeige') {
+    return h(BehinderungDetail, { id: selected, onBack: () => setSelected(null) })
+  }
+  if (selected && typ === 'bedenkenanzeige') {
+    return h(BedenkenDetail, { id: selected, onBack: () => setSelected(null) })
+  }
+  if (selected && typ === 'mangelanzeige') {
+    return h(MangelDetail, { id: selected, onBack: () => setSelected(null) })
+  }
 
   return h('div', { className: 'fade-in' },
     h('div', { className: 'flex items-center justify-between mb-6' },
