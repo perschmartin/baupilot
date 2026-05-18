@@ -802,6 +802,132 @@ function VorgaengeSeite({ typ, label }) {
 }
 
 // ================================================================
+// ExtraktorPanel — wiederverwendbare Komponente (AP 2.6 / E13c)
+// ================================================================
+// Zeigt entweder den vorhandenen Inhalt (Beschreibung + Q/Z/K) als
+// Steckbrief, oder einen Button zum LLM-gestuetzten Extrahieren aus
+// dem verknuepften PDF mit anschliessendem Bestaetigungs-Dialog (B-002).
+//
+// Erwartet als props:
+//   vorgang: das geladene Detail-Objekt (mit beschreibung etc.)
+//   reload:  Callback, der die Detail-Daten neu laed (nach Uebernahme)
+
+function ExtraktorPanel({ vorgang, reload }) {
+  const { token } = useAuth()
+  const [loading, setLoading] = useState(false)
+  const [err, setErr] = useState('')
+  // Vorschlag des LLM — null, solange noch nicht abgerufen.
+  // Nach /vorschlag: die strukturierten Felder.
+  const [vorschlag, setVorschlag] = useState(null)
+
+  const hatInhalt = Boolean(vorgang?.beschreibung)
+
+  const extrahieren = async () => {
+    setLoading(true); setErr('')
+    try {
+      // Backend laed PDF, extrahiert Text, ruft Qwen 32B. Kann 30-90s dauern.
+      const r = await bpApi(`/extraktion/${vorgang.id}/vorschlag`, { method: 'POST', token })
+      setVorschlag(r.vorschlag)
+    } catch (e) {
+      setErr(e.detail || 'Extraktion fehlgeschlagen')
+    }
+    setLoading(false)
+  }
+
+  const uebernehmen = async () => {
+    setLoading(true); setErr('')
+    try {
+      await bpApi(`/extraktion/${vorgang.id}/uebernehmen`, { method: 'POST', token })
+      setVorschlag(null)
+      // reload triggert ein erneutes Laden des Detail-Objekts —
+      // beschreibung ist dann gefuellt und der Steckbrief-Modus
+      // wird statt des Extrahieren-Buttons gezeigt.
+      if (reload) await reload()
+    } catch (e) {
+      setErr(e.detail || 'Uebernahme fehlgeschlagen')
+    }
+    setLoading(false)
+  }
+
+  // Zeile fuer den Vorschlag-Dialog: Label + Wert + Hinweis bei null
+  const z = (label, val, hinweis) => h('div', { className: 'flex justify-between text-xs gap-2 py-1 border-b border-white/5' },
+    h('span', { className: 'text-gray-500 shrink-0' }, label),
+    h('span', { className: val ? 'text-white text-right' : 'text-gray-600 text-right' }, val != null && val !== '' ? String(val) : (hinweis || '—')),
+  )
+
+  // VARIANTE 1: Inhalt schon vorhanden -> Steckbrief
+  if (hatInhalt) {
+    return h('div', { className: 'rounded-xl p-4 mb-4', style: { background: 'rgba(74,222,128,0.04)', border: '1px solid rgba(74,222,128,0.18)' } },
+      h('div', { className: 'text-[10px] uppercase tracking-widest text-green-300/80 mb-2' }, '📋 Inhalt (aus PDF-Extraktion)'),
+      h('p', { className: 'text-sm text-white whitespace-pre-wrap mb-3' }, vorgang.beschreibung),
+      // Q/Z/K wenn aus Extraktion uebernommen
+      (vorgang.kosten_eur != null || vorgang.zeit_arbeitstage != null || vorgang.qualitaet_bewertung) && h('div', { className: 'flex gap-4 text-xs text-gray-400 pt-2 border-t border-white/5' },
+        vorgang.kosten_eur != null && h('span', null, `💰 ${EUR(vorgang.kosten_eur)}`),
+        vorgang.zeit_arbeitstage != null && h('span', null, `⏱ ${vorgang.zeit_arbeitstage > 0 ? '+' : ''}${vorgang.zeit_arbeitstage} AT`),
+        vorgang.qualitaet_bewertung && h('span', null, `🎯 ${vorgang.qualitaet_bewertung}`),
+      ),
+    )
+  }
+
+  // VARIANTE 2: Vorschlag liegt vor -> Bestaetigungs-Dialog
+  if (vorschlag) {
+    return h('div', { className: 'rounded-xl p-4 mb-4', style: { background: 'rgba(245,166,35,0.05)', border: '1px solid rgba(245,166,35,0.25)' } },
+      h('div', { className: 'flex items-center justify-between mb-3' },
+        h('div', { className: 'text-[10px] uppercase tracking-widest text-amber-300' }, '🤖 LLM-Vorschlag (Konfidenz ' + Math.round((vorschlag.konfidenz || 0) * 100) + '%)'),
+        h('span', { className: 'text-[10px] text-gray-500' }, 'B-002: bitte pruefen vor Uebernahme'),
+      ),
+      h('div', { className: 'mb-3' },
+        z('Beschreibung', vorschlag.beschreibung, 'leer'),
+        z('Verantwortliche Firma', vorschlag.verantwortliche_firma),
+        z('Empfaenger', vorschlag.empfaenger),
+        z('Datum', vorschlag.datum_dokument),
+        z('LV-Position', vorschlag.betroffene_lv_position),
+        z('Bauteil', vorschlag.betroffenes_bauteil),
+        z('Kosten EUR', vorschlag.auswirkung_kosten_eur),
+        z('Zeit AT', vorschlag.auswirkung_zeit_arbeitstage),
+        z('Qualitaet', vorschlag.auswirkung_qualitaet),
+      ),
+      err && h('p', { className: 'text-xs text-red-400 mb-2' }, err),
+      h('div', { className: 'flex gap-2' },
+        h('button', {
+          className: 'bp-btn px-4 py-2 rounded-lg text-xs',
+          disabled: loading,
+          onClick: uebernehmen,
+        }, loading ? '…' : '✓ Uebernehmen'),
+        h('button', {
+          className: 'bp-btn-outline px-4 py-2 rounded-lg text-xs',
+          disabled: loading,
+          onClick: () => setVorschlag(null),
+        }, '✗ Verwerfen'),
+        h('button', {
+          className: 'bp-btn-outline px-4 py-2 rounded-lg text-xs ml-auto',
+          disabled: loading,
+          onClick: extrahieren,
+        }, '↻ Neu extrahieren'),
+      ),
+    )
+  }
+
+  // VARIANTE 3: Kein Inhalt, kein Vorschlag -> Start-Button
+  return h('div', { className: 'rounded-xl p-4 mb-4', style: { background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' } },
+    h('div', { className: 'flex items-center justify-between gap-3' },
+      h('div', null,
+        h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-500 mb-1' }, '📋 Inhalt'),
+        h('p', { className: 'text-xs text-gray-400' }, 'Noch keine Beschreibung erfasst. Inhalt aus dem verknuepften PDF extrahieren?'),
+      ),
+      h('button', {
+        className: 'bp-btn px-4 py-2 rounded-lg text-xs whitespace-nowrap',
+        disabled: loading,
+        onClick: extrahieren,
+        title: 'LLM-gestuetzte Extraktion aus dem verknuepften PDF (kann 30-90s dauern)',
+      }, loading ? '🤖 Extrahiere…' : '🤖 Inhalt extrahieren'),
+    ),
+    err && h('p', { className: 'text-xs text-red-400 mt-2' }, err),
+  )
+}
+
+
+// ================================================================
 // BEHINDERUNG-DETAIL (AP 2.2a)
 // ================================================================
 // 6-Schritte-Workflow analog zu Nachtraegen, aber ohne LV/Kosten/Vorlage:
@@ -913,8 +1039,10 @@ function BehinderungDetail({ id, onBack }) {
           h('p', { className: 'text-[11px] text-gray-400 mt-1' }, 'Behinderung als erledigt dokumentiert.'),
         ),
       ),
-      // === CONTENT — Stammdaten + Dreiklang ===
+      // === CONTENT — ExtraktorPanel + Stammdaten + Dreiklang ===
       h('div', null,
+        // E13c: LLM-Extraktor / Steckbrief (loest die "leere Detail-Seite"-Frage)
+        h(ExtraktorPanel, { vorgang: beh, reload: laden }),
         h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5 mb-4' },
           h('h3', { className: 'text-sm font-semibold text-white mb-4' }, 'Stammdaten'),
           h('div', { className: 'grid grid-cols-2 gap-3 text-xs' },
@@ -924,10 +1052,6 @@ function BehinderungDetail({ id, onBack }) {
             _stamm('Frist', beh.frist ? new Date(beh.frist).toLocaleDateString('de-DE') : '—'),
             _stamm('Erstellt am', beh.erstellt_am ? new Date(beh.erstellt_am).toLocaleString('de-DE') : '—'),
             _stamm('Erstellt von', beh.erstellt_von || '—'),
-          ),
-          beh.beschreibung && h('div', { className: 'mt-4 pt-4 border-t border-white/5' },
-            h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1.5' }, 'Beschreibung'),
-            h('p', { className: 'text-xs text-gray-300 whitespace-pre-wrap' }, beh.beschreibung),
           ),
         ),
         // Dreiklang Q/Z/K (zentrale Pflichtdimension G3)
@@ -1104,8 +1228,10 @@ function BedenkenDetail({ id, onBack }) {
           h('p', { className: 'text-[11px] text-gray-400 mt-1' }, 'Bedenken als erledigt dokumentiert.'),
         ),
       ),
-      // === CONTENT — Stammdaten + LV-Bezug + Gewaehrleistung + Dreiklang ===
+      // === CONTENT — ExtraktorPanel + Stammdaten + LV-Bezug + Gewaehrleistung + Dreiklang ===
       h('div', null,
+        // E13c: LLM-Extraktor / Steckbrief
+        h(ExtraktorPanel, { vorgang: bed, reload: laden }),
         h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5 mb-4' },
           h('h3', { className: 'text-sm font-semibold text-white mb-4' }, 'Stammdaten'),
           h('div', { className: 'grid grid-cols-2 gap-3 text-xs' },
@@ -1116,10 +1242,6 @@ function BedenkenDetail({ id, onBack }) {
             // AP 2.2b: LV-Zuordnung sichtbar machen — Volltext in spaeteren Etappen.
             _stamm('LV-Bezug', bed.lv_id ? bed.lv_id.toString().substring(0, 8) + '…' : '— keine Zuordnung'),
             _stamm('Erstellt am', bed.erstellt_am ? new Date(bed.erstellt_am).toLocaleString('de-DE') : '—'),
-          ),
-          bed.beschreibung && h('div', { className: 'mt-4 pt-4 border-t border-white/5' },
-            h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1.5' }, 'Beschreibung'),
-            h('p', { className: 'text-xs text-gray-300 whitespace-pre-wrap' }, bed.beschreibung),
           ),
         ),
         // Gewaehrleistungsfrist (editierbar) — bedenken-spezifisch, Migration 008.
@@ -1334,6 +1456,8 @@ function MangelDetail({ id, onBack }) {
       ),
       // === CONTENT ===
       h('div', null,
+        // E13c: LLM-Extraktor / Steckbrief
+        h(ExtraktorPanel, { vorgang: m, reload: laden }),
         // Stammdaten + Verantwortung
         h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5 mb-4' },
           h('h3', { className: 'text-sm font-semibold text-white mb-4' }, 'Stammdaten'),
@@ -1344,10 +1468,6 @@ function MangelDetail({ id, onBack }) {
             _stamm('Verantwortung', verantwort),
             _stamm('Gewaehrleistung +Monate', m.verlaengerung_monate != null ? `+${m.verlaengerung_monate}` : '—'),
             _stamm('Frist', m.frist ? new Date(m.frist).toLocaleDateString('de-DE') : '—'),
-          ),
-          m.beschreibung && h('div', { className: 'mt-4 pt-4 border-t border-white/5' },
-            h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1.5' }, 'Beschreibung'),
-            h('p', { className: 'text-xs text-gray-300 whitespace-pre-wrap' }, m.beschreibung),
           ),
         ),
         // Klassifikation + Kostenuntergliederung (editierbar)

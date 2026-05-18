@@ -185,6 +185,7 @@ def speichere_ergebnis_in_pruefschritt(
         "behinderungsanzeige": "behinderungspruefung",
         "bedenkenanzeige": "bedenkenpruefung",
         "mangelanzeige": "mangelpruefung",
+        "nachtrag": "nachtragspruefung",
     }.get(typ)
     if not tabelle:
         raise ExtraktionError(f"Unbekannter Vorgangstyp: {typ}", 400)
@@ -235,17 +236,34 @@ def uebernehme_in_vorgang(
     set_parts: list[str] = []
     params: dict[str, Any] = {"vid": str(vorgang_id), "ben": benutzer_name}
 
+    # Den Vorgangstyp brauchen wir fuer das Mapping NT-spezifischer Felder.
+    typ_row = db.execute(
+        text("SELECT typ::text FROM vorgaenge WHERE id = :vid"),
+        {"vid": str(vorgang_id)},
+    ).first()
+    typ = typ_row[0] if typ_row else None
+
     if extrahiert.get("beschreibung"):
         set_parts.append("beschreibung = COALESCE(beschreibung, :besch)")
         params["besch"] = extrahiert["beschreibung"]
     if extrahiert.get("auswirkung_kosten_eur") is not None:
-        set_parts.append("kosten_eur = COALESCE(kosten_eur, :k)")
+        if typ == "nachtrag":
+            # Nachtraege haben betrag_gefordert statt kosten_eur (Migration 007)
+            set_parts.append("betrag_gefordert = COALESCE(betrag_gefordert, :k)")
+        else:
+            set_parts.append("kosten_eur = COALESCE(kosten_eur, :k)")
         params["k"] = float(extrahiert["auswirkung_kosten_eur"])
     if extrahiert.get("auswirkung_zeit_arbeitstage") is not None:
-        set_parts.append("zeit_arbeitstage = COALESCE(zeit_arbeitstage, :z)")
+        if typ == "nachtrag":
+            set_parts.append("zeitauswirkung_tage = COALESCE(zeitauswirkung_tage, :z)")
+        else:
+            set_parts.append("zeit_arbeitstage = COALESCE(zeit_arbeitstage, :z)")
         params["z"] = int(extrahiert["auswirkung_zeit_arbeitstage"])
     if extrahiert.get("auswirkung_qualitaet"):
-        set_parts.append("qualitaet_bewertung = COALESCE(qualitaet_bewertung, :q)")
+        if typ == "nachtrag":
+            set_parts.append("qualitaetsauswirkung = COALESCE(qualitaetsauswirkung, :q)")
+        else:
+            set_parts.append("qualitaet_bewertung = COALESCE(qualitaet_bewertung, :q)")
         params["q"] = extrahiert["auswirkung_qualitaet"]
 
     if not set_parts:
@@ -254,7 +272,8 @@ def uebernehme_in_vorgang(
     set_parts.extend(["geaendert_am = NOW()", "geaendert_von = :ben"])
     sql = f"UPDATE vorgaenge SET {', '.join(set_parts)} WHERE id = :vid"
     db.execute(text(sql), params)
-    # KI-Bestaetigt-Flag im Pruefschritt 1 setzen
+    # KI-Bestaetigt-Flag im Pruefschritt 1 aller Pruefungs-Tabellen setzen.
+    # Nur eine Tabelle hat die passende Zeile — die anderen UPDATEs sind No-Op.
     db.execute(
         text("""
             UPDATE behinderungspruefung SET ki_bestaetigt = TRUE, ki_bestaetigt_von = (
@@ -264,6 +283,9 @@ def uebernehme_in_vorgang(
                 SELECT id FROM shared.benutzer WHERE email = 'admin@baupilot.de' LIMIT 1
             ), ki_bestaetigt_am = NOW() WHERE vorgang_id = :vid AND schritt = 1;
             UPDATE mangelpruefung SET ki_bestaetigt = TRUE, ki_bestaetigt_von = (
+                SELECT id FROM shared.benutzer WHERE email = 'admin@baupilot.de' LIMIT 1
+            ), ki_bestaetigt_am = NOW() WHERE vorgang_id = :vid AND schritt = 1;
+            UPDATE nachtragspruefung SET ki_bestaetigt = TRUE, ki_bestaetigt_von = (
                 SELECT id FROM shared.benutzer WHERE email = 'admin@baupilot.de' LIMIT 1
             ), ki_bestaetigt_am = NOW() WHERE vorgang_id = :vid AND schritt = 1;
         """),

@@ -50,10 +50,10 @@ def extraktion_vorschlag(
       5. Vorschlag als JSON an Anwender zurueckgeben — der entscheidet, ob er ihn uebernimmt.
     """
     typ = _vorgangstyp(db, vorgang_id)
-    if typ not in ("behinderungsanzeige", "bedenkenanzeige", "mangelanzeige"):
+    if typ not in ("behinderungsanzeige", "bedenkenanzeige", "mangelanzeige", "nachtrag"):
         raise HTTPException(
             status_code=400,
-            detail=f"Extraktion derzeit nur fuer Stoerungstypen, nicht fuer '{typ}'.",
+            detail=f"Extraktion derzeit nicht fuer Vorgangstyp '{typ}'.",
         )
 
     try:
@@ -89,7 +89,7 @@ def extraktion_uebernehmen(
     nur leere Felder werden befuellt.
     """
     typ = _vorgangstyp(db, vorgang_id)
-    if typ not in ("behinderungsanzeige", "bedenkenanzeige", "mangelanzeige"):
+    if typ not in ("behinderungsanzeige", "bedenkenanzeige", "mangelanzeige", "nachtrag"):
         raise HTTPException(status_code=400, detail=f"Uebernahme nicht fuer Typ '{typ}'.")
 
     # ki_ergebnis aus dem passenden Pruefschritt 1 holen
@@ -97,6 +97,7 @@ def extraktion_uebernehmen(
         "behinderungsanzeige": "behinderungspruefung",
         "bedenkenanzeige": "bedenkenpruefung",
         "mangelanzeige": "mangelpruefung",
+        "nachtrag": "nachtragspruefung",
     }[typ]
     row = db.execute(
         text(f"SELECT ki_ergebnis FROM {tabelle} WHERE vorgang_id = :vid AND schritt = 1"),
