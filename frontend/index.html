@@ -53,41 +53,148 @@ const BP_LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAB1AAAAGwCAYAAAAXG
 const API = '/api/v1/auth'
 const API_BASE = '/api/v1'
 
+// ================================================================
+// Silent Token Refresh (QW-01)
+// Verhindert Session-Ablauf nach 15min. Refresh-Token gilt 7 Tage.
+// Bei 401 wird automatisch ein neues Access-Token geholt und der
+// Request wiederholt. Concurrent Refreshes werden dedupliziert.
+// ================================================================
+let _refreshPromise = null
+
+async function doRefreshToken() {
+  if (_refreshPromise) return _refreshPromise
+  _refreshPromise = (async () => {
+    try {
+      const rt = sessionStorage.getItem('bp_refresh')
+      if (!rt) throw new Error('Kein Refresh-Token')
+      const res = await fetch(`${API}/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: rt }),
+      })
+      if (!res.ok) throw new Error('Refresh fehlgeschlagen')
+      const data = await res.json()
+      sessionStorage.setItem('bp_token', data.access_token)
+      sessionStorage.setItem('bp_refresh', data.refresh_token)
+      // AuthProvider ueber neuen Token informieren
+      window.dispatchEvent(new CustomEvent('bp_token_refreshed', {
+        detail: { access_token: data.access_token, refresh_token: data.refresh_token }
+      }))
+      return data.access_token
+    } catch (e) {
+      // Refresh fehlgeschlagen — Session beenden
+      sessionStorage.removeItem('bp_token')
+      sessionStorage.removeItem('bp_refresh')
+      window.dispatchEvent(new CustomEvent('bp_token_expired'))
+      throw e
+    } finally {
+      _refreshPromise = null
+    }
+  })()
+  return _refreshPromise
+}
+
 async function api(path, opts = {}) {
-  const { method = 'GET', body, token } = opts
+  const { method = 'GET', body, token, _retried } = opts
   const headers = { 'Content-Type': 'application/json' }
-  if (token) headers['Authorization'] = `Bearer ${token}`
+  const activeToken = token || sessionStorage.getItem('bp_token')
+  if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`
   const res = await fetch(`${API}${path}`, {
     method, headers,
     body: body ? JSON.stringify(body) : undefined,
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw { status: res.status, detail: data.detail || 'Unbekannter Fehler' }
+  if (!res.ok) {
+    // Bei 401: einmal Refresh versuchen, dann Request wiederholen
+    if (res.status === 401 && !_retried && activeToken) {
+      try {
+        const newToken = await doRefreshToken()
+        return api(path, { ...opts, token: newToken, _retried: true })
+      } catch { /* Refresh fehlgeschlagen, Original-Fehler werfen */ }
+    }
+    throw { status: res.status, detail: data.detail || 'Unbekannter Fehler' }
+  }
   return data
 }
 
 async function bpApi(path, opts = {}) {
-  const { method = 'GET', body, token } = opts
+  const { method = 'GET', body, token, _retried } = opts
   const headers = { 'Content-Type': 'application/json' }
-  if (token) headers['Authorization'] = `Bearer ${token}`
+  const activeToken = token || sessionStorage.getItem('bp_token')
+  if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`
   const res = await fetch(`${API_BASE}${path}`, {
     method, headers,
     body: body ? JSON.stringify(body) : undefined,
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw { status: res.status, detail: data.detail || 'Unbekannter Fehler' }
+  if (!res.ok) {
+    if (res.status === 401 && !_retried && activeToken) {
+      try {
+        const newToken = await doRefreshToken()
+        return bpApi(path, { ...opts, token: newToken, _retried: true })
+      } catch { /* Refresh fehlgeschlagen */ }
+    }
+    throw { status: res.status, detail: data.detail || 'Unbekannter Fehler' }
+  }
   return data
 }
 
-async function bpUpload(path, formData, token) {
+// bpUpload — Datei-Upload via FormData (multipart), mit Silent Token Refresh.
+// Bei 401 wird einmal ein Refresh-Call ausgeloest und der Upload mit neuem Token wiederholt.
+// FormData wird unveraendert wiederverwendet — der Body wird im fetch-Aufruf nur ein
+// einziges Mal serialisiert, daher ist die Wiederverwendung zwischen den beiden
+// fetch-Aufrufen unkritisch (verifiziert in Sandbox-Test T2).
+// Der Parameter _retried verhindert eine Endlosschleife, falls auch nach Refresh
+// ein 401 zurueckkommt (zB Account-Sperre direkt nach Refresh — Test T7).
+async function bpUpload(path, formData, token, _retried) {
   const headers = {}
-  if (token) headers['Authorization'] = `Bearer ${token}`
+  // Token-Quelle: expliziter Parameter > sessionStorage. So funktioniert der Helper
+  // auch in Komponenten, die den Token noch nicht via Auth-Hook bezogen haben.
+  const activeToken = token || sessionStorage.getItem('bp_token')
+  if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`
   const res = await fetch(`${API_BASE}${path}`, {
     method: 'POST', headers, body: formData,
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw { status: res.status, detail: data.detail || 'Upload fehlgeschlagen' }
+  if (!res.ok) {
+    // 401 + noch kein Retry-Versuch + Token war ueberhaupt gesetzt → Silent Refresh.
+    if (res.status === 401 && !_retried && activeToken) {
+      try {
+        const newToken = await doRefreshToken()
+        // Gleiche FormData, neuer Token, _retried=true → maximal 1 weiterer Versuch.
+        return bpUpload(path, formData, newToken, true)
+      } catch { /* Refresh fehlgeschlagen — doRefreshToken hat bp_token_expired gefeuert */ }
+    }
+    throw { status: res.status, detail: data.detail || 'Upload fehlgeschlagen' }
+  }
   return data
+}
+
+// bpDownload — Datei-Download als Blob, mit Silent Token Refresh.
+// Wird aktuell von handleDownload in DokumenteSeite genutzt; ist bewusst generisch
+// gehalten, damit kuenftige Download-Endpoints (AP 2.5 Protokoll-PDF, LV-Exporte etc.)
+// denselben Refresh-Pfad bekommen.
+// Gibt den rohen Blob zurueck — der Aufrufer kuemmert sich um Dateiname und
+// Browser-Download-Trick (URL.createObjectURL + a.click()).
+async function bpDownload(path, opts = {}) {
+  const { method = 'GET', token, _retried } = opts
+  const headers = {}
+  const activeToken = token || sessionStorage.getItem('bp_token')
+  if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`
+  const res = await fetch(`${API_BASE}${path}`, { method, headers })
+  if (!res.ok) {
+    if (res.status === 401 && !_retried && activeToken) {
+      try {
+        const newToken = await doRefreshToken()
+        return bpDownload(path, { ...opts, token: newToken, _retried: true })
+      } catch { /* Refresh fehlgeschlagen */ }
+    }
+    // Fehler-Detail aus dem Body lesen — falls JSON (z.B. {detail: "..."}).
+    let detail = 'Download fehlgeschlagen'
+    try { const j = await res.json(); detail = j.detail || detail } catch {}
+    throw { status: res.status, detail }
+  }
+  return await res.blob()
 }
 
 // ================================================================
@@ -113,6 +220,24 @@ function AuthProvider({ children }) {
     if (refresh) api('/logout', { method: 'POST', body: { refresh_token: refresh }, token }).catch(() => {})
     saveTokens(null, null); setUser(null); setPhase('login')
   }, [token, refresh])
+
+  // QW-01: Auf Silent-Refresh-Events reagieren
+  useEffect(() => {
+    const onRefreshed = (e) => {
+      const { access_token, refresh_token } = e.detail
+      setToken(access_token)
+      setRefresh(refresh_token)
+    }
+    const onExpired = () => {
+      setToken(null); setRefresh(null); setUser(null); setPhase('login')
+    }
+    window.addEventListener('bp_token_refreshed', onRefreshed)
+    window.addEventListener('bp_token_expired', onExpired)
+    return () => {
+      window.removeEventListener('bp_token_refreshed', onRefreshed)
+      window.removeEventListener('bp_token_expired', onExpired)
+    }
+  }, [])
 
   // Beim Start: Token Prüfen
   useEffect(() => {
@@ -682,17 +807,19 @@ function DokumenteSeite() {
   }, [token, laden])
 
   const handleDownload = useCallback(async (dok) => {
+    // Nutzt bpDownload statt direktem fetch → bekommt damit den Silent Token Refresh.
+    // Vor dieser Aenderung lief der Aufruf an /dokumente/{id}/download nach 15 Min
+    // Idle in einen unbehandelten 401 und der Klick „fiel ins Leere".
     try {
-      const res = await fetch(`${API_BASE}/dokumente/${dok.id}/download`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Download fehlgeschlagen')
-      const blob = await res.blob()
+      const blob = await bpDownload(`/dokumente/${dok.id}/download`, { token })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url; a.download = dok.dateiname; a.click()
       URL.revokeObjectURL(url)
-    } catch (e) { setErr(e.message || 'Download fehlgeschlagen') }
+    } catch (e) {
+      // bpDownload wirft {status, detail} — kein Error-Objekt, daher e.detail vor e.message.
+      setErr(e.detail || e.message || 'Download fehlgeschlagen')
+    }
   }, [token])
 
   return h('div', { className: 'fade-in' },
@@ -1075,7 +1202,7 @@ function NachtragDetail({ id, onBack }) {
         h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
           h('div', { className: 'text-xs text-gray-500 uppercase tracking-widest mb-1.5' }, 'Zeit'),
           h('div', { className: 'text-xl font-bold text-white' },
-            nt.zeitauswirkung_tage != null ? `${nt.zeitauswirkung_tage} ` : '\u2014',
+            nt.zeitauswirkung_tage != null ? `${nt.zeitauswirkung_tage > 0 ? '+' : ''}${nt.zeitauswirkung_tage} ` : '\u2014',
             nt.zeitauswirkung_tage != null && h('span', { className: 'text-sm font-normal text-gray-400' }, 'Arbeitstage'),
           ),
         ),
@@ -1769,22 +1896,30 @@ function AufgabeDetail({ id, onBack }) {
       !['abgeschlossen','storniert'].includes(aufgabe.status) && h('button', { className: 'bp-btn-outline px-4 py-2 rounded-lg text-xs text-red-400 border-red-800 hover:border-red-600', onClick: () => statusWechsel('storniert') }, 'Stornieren'),
     ),
     err && h(Alert, { type: 'error' }, err),
-    // Kommentare
+    // Kommentare als Timeline (QW-03)
     h(Card, null,
-      h('h3', { className: 'text-sm font-semibold text-bp-muted uppercase tracking-wider mb-4' }, `Kommentare (${aufgabe.kommentare?.length || 0})`),
+      h('h3', { className: 'text-sm font-semibold text-bp-muted uppercase tracking-wider mb-4' }, `Aufgabenhistorie (${aufgabe.kommentare?.length || 0})`),
       aufgabe.kommentare?.length > 0
-        ? h('div', { className: 'space-y-3 mb-4' },
-            aufgabe.kommentare.map(k =>
-              h('div', { key: k.id, className: 'bg-bp-dark rounded-lg p-3' },
-                h('div', { className: 'flex justify-between text-xs text-bp-muted mb-1' },
-                  h('span', { className: 'font-medium text-white' }, k.autor_name),
-                  h('span', null, new Date(k.erstellt_am).toLocaleString('de-DE')),
+        ? h('div', { className: 'relative mb-4 pl-6', style: { borderLeft: '2px solid rgba(245,158,11,0.25)' } },
+            aufgabe.kommentare.map((k, idx) =>
+              h('div', { key: k.id, className: 'relative pb-4' + (idx === aufgabe.kommentare.length - 1 ? ' pb-0' : '') },
+                // Timeline-Punkt
+                h('div', { className: 'absolute', style: { left: '-23px', top: '4px', width: '10px', height: '10px', borderRadius: '50%', background: idx === 0 ? '#f59e0b' : '#374151', border: '2px solid #f59e0b' } }),
+                // Inhalt
+                h('div', { className: 'bg-bp-dark rounded-lg p-3' },
+                  h('div', { className: 'flex justify-between items-center text-xs text-bp-muted mb-1.5' },
+                    h('span', { className: 'inline-flex items-center gap-1.5' },
+                      h('span', { style: { display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: '#f59e0b' } }),
+                      h('span', { className: 'font-medium text-white' }, k.autor_name),
+                    ),
+                    h('span', null, new Date(k.erstellt_am).toLocaleString('de-DE')),
+                  ),
+                  h('p', { className: 'text-sm text-gray-300' }, k.inhalt),
                 ),
-                h('p', { className: 'text-sm text-gray-300' }, k.inhalt),
               )
             ),
           )
-        : h('p', { className: 'text-sm text-bp-muted mb-4' }, 'Noch keine Kommentare.'),
+        : h('p', { className: 'text-sm text-bp-muted mb-4' }, 'Noch keine Eintr\u00E4ge.'),
       // Kommentar-Formular
       h('form', { onSubmit: kommentarSenden, className: 'flex gap-2' },
         h('input', { className: 'bp-input flex-1 px-4 py-2 rounded-lg text-sm', value: kommentar, onChange: e => setKommentar(e.target.value), placeholder: 'Kommentar schreiben...' }),
