@@ -1455,6 +1455,11 @@ function DokumenteSeite() {
   const [err, setErr] = useState('')
   const [showUpload, setShowUpload] = useState(false)
   const [uploadMsg, setUploadMsg] = useState('')
+  // E11 / B-013: Tag-System. Tags werden einmalig vom Backend geladen und
+  // ueber den Forest-Aufbau (parent_id) in Wurzeln und Kinder gegliedert.
+  const [alleTags, setAlleTags] = useState([])
+  const [tagBauphase, setTagBauphase] = useState('')
+  const [tagBauteil, setTagBauteil] = useState('')
 
   const laden = useCallback(async () => {
     setLoading(true)
@@ -1472,6 +1477,22 @@ function DokumenteSeite() {
 
   useEffect(() => { laden() }, [laden])
 
+  // E11 / B-013: Tag-Liste einmalig laden fuer die Picker im Upload-Formular.
+  // Stumm bei Fehler — der Upload funktioniert auch ohne Tag-Auswahl.
+  useEffect(() => {
+    if (!token) return
+    bpApi('/tags', { token })
+      .then(r => setAlleTags(r.tags || []))
+      .catch(() => {})
+  }, [token])
+
+  // Hilfsfunktion: Kinder eines Wurzel-Tags aus der flachen Tag-Liste extrahieren.
+  const tagsKinder = (wurzelWert) => {
+    const wurzel = alleTags.find(t => t.ist_kategorie_wurzel && t.wert === wurzelWert)
+    if (!wurzel) return []
+    return alleTags.filter(t => t.parent_id === wurzel.id)
+  }
+
   const handleUpload = useCallback(async (e) => {
     e.preventDefault()
     const form = e.target
@@ -1486,13 +1507,25 @@ function DokumenteSeite() {
     try {
       setUploadMsg('Wird hochgeladen...')
       const r = await bpUpload('/dokumente/upload', fd, token)
-      setUploadMsg(`\u2705 ${r.dateiname} hochgeladen (${formatBytes(r.dateigroesse_bytes)})${r.duplikat_warnung ? ' \u26A0\uFE0F ' + r.duplikat_warnung : ''}`)
+      // E11: Nach erfolgreichem Upload optional Bauphase- und Bauteil-Tag setzen.
+      // Tag-Zuordnung ist additiv \u2014 bei Fehler bleibt das Dokument trotzdem erhalten.
+      // Der Dokumenttyp-Tag wird hier NICHT manuell gesetzt, weil eine spaetere
+      // Backend-Logik das automatisch aus der dokumente.kategorie ableiten kann
+      // (analog zum Seed-Skript scripts/seed-dokument-tags.ps1).
+      const tagsZuSetzen = [tagBauphase, tagBauteil].filter(Boolean)
+      for (const tid of tagsZuSetzen) {
+        try {
+          await bpApi(`/dokumente/${r.id}/tags`, { method: 'POST', body: { tag_id: tid }, token })
+        } catch { /* einzelner Tag-Fehler stoert den Upload nicht */ }
+      }
+      setUploadMsg(`\u2705 ${r.dateiname} hochgeladen (${formatBytes(r.dateigroesse_bytes)})${tagsZuSetzen.length ? ` \u00B7 ${tagsZuSetzen.length} Tag(s)` : ''}${r.duplikat_warnung ? ' \u26A0\uFE0F ' + r.duplikat_warnung : ''}`)
       form.reset()
+      setTagBauphase(''); setTagBauteil('')
       laden()
     } catch (e) {
       setUploadMsg(`\u274C ${e.detail || 'Upload fehlgeschlagen'}`)
     }
-  }, [token, laden])
+  }, [token, laden, tagBauphase, tagBauteil])
 
   const handleDownload = useCallback(async (dok) => {
     // Nutzt bpDownload statt direktem fetch → bekommt damit den Silent Token Refresh.
@@ -1538,10 +1571,28 @@ function DokumenteSeite() {
         ),
         h('input', { name: 'beschreibung', className: 'bp-input px-3 py-2 rounded text-sm flex-1', placeholder: 'Beschreibung (optional)' }),
       ),
+      // E11 / B-013: optionale Tag-Picker fuer Bauphase und Bauteil.
+      // Dokumenttyp wird aus der Kategorie ueber Backend-Logik abgeleitet
+      // (Migrations-Skript scripts/seed-dokument-tags.ps1 macht das nachtraeglich).
+      h('div', { className: 'flex gap-3' },
+        h('select', { className: 'bp-input px-3 py-2 rounded text-sm flex-1', value: tagBauphase, onChange: e => setTagBauphase(e.target.value) },
+          h('option', { value: '' }, '— Bauphase (optional) —'),
+          tagsKinder('Bauphase').map(t => h('option', { key: t.id, value: t.id }, t.wert)),
+        ),
+        h('select', { className: 'bp-input px-3 py-2 rounded text-sm flex-1', value: tagBauteil, onChange: e => setTagBauteil(e.target.value) },
+          h('option', { value: '' }, '— Bauteil (optional) —'),
+          tagsKinder('Bauteil').map(t => h('option', { key: t.id, value: t.id }, t.wert)),
+        ),
+      ),
       h('div', { className: 'flex items-center gap-3' },
         h(Button, { type: 'submit' }, 'Hochladen'),
         uploadMsg && h('span', { className: 'text-sm' }, uploadMsg),
       ),
+    ),
+    // E11 Status-Banner: Anwender soll wissen, dass das Tag-System aktiv ist
+    // und welche Schritte noch offen sind (Tree-View, Filterung).
+    h('div', { className: 'mb-4 px-3 py-2 rounded text-[11px]', style: { background: 'rgba(245,166,35,0.06)', border: '1px solid rgba(245,166,35,0.15)', color: '#e5e5e5' } },
+      '🏷️ Tag-System aktiv (B-013): 318 von 643 Dokumenten sind nach Dokumenttyp getagt. Bauphase und Bauteil koennen beim Upload optional gewaehlt werden. Tree-View und Tag-Filter in der Liste folgen mit Etappe 11b.',
     ),
     // Suche
     h('div', { className: 'mb-4' },
