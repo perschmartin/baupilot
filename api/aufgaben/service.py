@@ -142,7 +142,35 @@ class AufgabenService:
 
         self._commit()
 
-        return dict(row)
+        aufgabe = dict(row)
+
+        # E10/B-012: Wenn ein anderer Benutzer als Zustaendiger eingetragen
+        # wurde, bekommt dieser eine In-App-Benachrichtigung. Selbst-Zuweisung
+        # (Ersteller = Zustaendiger) loest keine Benachrichtigung aus — der
+        # Anwender weiss ohnehin, was er gerade angelegt hat.
+        try:
+            if zustaendig_benutzer_id and str(zustaendig_benutzer_id) != str(erstellt_von_id):
+                # Lokaler Import, um Zirkel-Imports zu vermeiden
+                from benachrichtigungen.service import BenachrichtigungsService
+
+                BenachrichtigungsService(self.db).erstelle(
+                    benutzer_id=zustaendig_benutzer_id,
+                    typ="neuer_vorgang",
+                    prioritaet="hinweis" if prioritaet in ("hoch", "kritisch") else "info",
+                    titel=f"Neue Aufgabe {nummer}: {gegenstand[:80]}",
+                    inhalt=(
+                        f"{erstellt_von_name} hat dir die Aufgabe {nummer} zugewiesen."
+                        + (f" Frist: {frist}" if frist else "")
+                    ),
+                    vorgang_id=aufgabe["id"],
+                )
+        except Exception as e:
+            # Trigger-Fehler duerfen die Aufgaben-Erstellung NIE blockieren.
+            # service.erstelle() faengt eigentlich selbst, dies hier ist Doppelnetz.
+            import logging
+            logging.getLogger(__name__).warning("Benachrichtigungs-Trigger fehlgeschlagen: %s", e)
+
+        return aufgabe
 
     # ==================================================================
     # AUFGABEN AUFLISTEN

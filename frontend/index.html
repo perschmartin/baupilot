@@ -2418,6 +2418,133 @@ function NachtraegeSeite() {
 // DASHBOARD mit Navigation
 // ================================================================
 
+// E10 / B-012: Bell-Icon mit Badge fuer In-App-Benachrichtigungen.
+// Polling der Anzahl ungelesener Benachrichtigungen alle 30 Sekunden.
+// Beim Oeffnen des Dropdowns wird die volle Liste der letzten 10 geladen.
+// Klick auf eine Benachrichtigung markiert sie als gelesen.
+function BellMenu() {
+  const { token } = useAuth()
+  const [ungelesen, setUngelesen] = useState(0)
+  const [offen, setOffen] = useState(false)
+  const [liste, setListe] = useState([])
+  const [loadingListe, setLoadingListe] = useState(false)
+
+  // Anzahl-Polling alle 30s. Ein einzelner Endpoint, sehr leichtgewichtig.
+  // Bei Aktion (Lesen) sofort neu pullen, damit Badge sich aktualisiert.
+  const ladeAnzahl = useCallback(async () => {
+    try {
+      const r = await bpApi('/benachrichtigungen/ungelesen-anzahl', { token })
+      setUngelesen(r.ungelesen || 0)
+    } catch { /* stumm — Bell darf nie blockieren */ }
+  }, [token])
+
+  useEffect(() => {
+    if (!token) return
+    ladeAnzahl()
+    const iv = setInterval(ladeAnzahl, 30000)
+    return () => clearInterval(iv)
+  }, [token, ladeAnzahl])
+
+  // Beim Oeffnen die Liste der letzten 10 laden
+  const oeffnen = async () => {
+    setOffen(true)
+    setLoadingListe(true)
+    try {
+      const r = await bpApi('/benachrichtigungen/?limit=10', { token })
+      setListe(r.benachrichtigungen || [])
+    } catch { /* stumm */ }
+    setLoadingListe(false)
+  }
+
+  const markiereGelesen = async (id) => {
+    try {
+      await bpApi(`/benachrichtigungen/${id}/gelesen`, { method: 'POST', token })
+      // Lokale Liste anpassen + Badge neu pullen
+      setListe(prev => prev.map(b => b.id === id ? { ...b, gelesen: true } : b))
+      ladeAnzahl()
+    } catch { /* stumm */ }
+  }
+
+  const alleGelesen = async () => {
+    try {
+      await bpApi('/benachrichtigungen/alle-gelesen', { method: 'POST', token })
+      setListe(prev => prev.map(b => ({ ...b, gelesen: true })))
+      ladeAnzahl()
+    } catch { /* stumm */ }
+  }
+
+  // Klick auf Eintrag oeffnet derzeit nichts — Detailansicht-Navigation folgt
+  // mit Etappen 12/13 (wenn Protokolle/Verknuepfungen verfuegbar sind).
+  // Heute markiert ein Klick nur als gelesen.
+
+  return h('div', { style: { position: 'relative' } },
+    h('button', {
+      className: 'bp-btn-outline px-3 py-2 rounded-lg text-xs relative',
+      onClick: () => offen ? setOffen(false) : oeffnen(),
+      title: ungelesen > 0 ? `${ungelesen} ungelesene Benachrichtigung${ungelesen === 1 ? '' : 'en'}` : 'Keine ungelesenen Benachrichtigungen',
+    },
+      '🔔',
+      ungelesen > 0 && h('span', {
+        style: {
+          position: 'absolute', top: '-4px', right: '-4px',
+          minWidth: '18px', height: '18px', padding: '0 4px',
+          background: '#ef4444', color: 'white',
+          borderRadius: '9px', fontSize: '10px',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontWeight: 'bold',
+        },
+      }, ungelesen > 99 ? '99+' : String(ungelesen)),
+    ),
+    offen && h('div', {
+      style: {
+        position: 'absolute', top: 'calc(100% + 8px)', right: 0,
+        width: '380px', maxWidth: '90vw',
+        background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: '12px', padding: '12px',
+        boxShadow: '0 12px 32px rgba(0,0,0,0.6)',
+        zIndex: 50,
+      },
+    },
+      h('div', { className: 'flex items-center justify-between mb-2' },
+        h('span', { className: 'text-xs uppercase tracking-widest text-gray-500' }, 'Benachrichtigungen'),
+        ungelesen > 0 && h('button', {
+          className: 'text-[11px] text-bp-400 hover:underline',
+          onClick: alleGelesen,
+        }, 'Alle gelesen'),
+      ),
+      loadingListe
+        ? h('p', { className: 'text-xs text-gray-500 py-4 text-center' }, 'Laden…')
+        : liste.length === 0
+          ? h('p', { className: 'text-xs text-gray-500 py-4 text-center' }, 'Keine Benachrichtigungen.')
+          : h('div', { style: { maxHeight: '50vh', overflowY: 'auto' }, className: 'space-y-1.5' },
+              liste.map(b => h('div', {
+                key: b.id,
+                onClick: () => !b.gelesen && markiereGelesen(b.id),
+                style: {
+                  padding: '10px 12px', borderRadius: '8px',
+                  background: b.gelesen ? 'rgba(255,255,255,0.02)' : 'rgba(245,166,35,0.06)',
+                  border: `1px solid ${b.gelesen ? 'rgba(255,255,255,0.04)' : 'rgba(245,166,35,0.15)'}`,
+                  cursor: b.gelesen ? 'default' : 'pointer',
+                },
+              },
+                h('div', { className: 'flex items-start justify-between gap-2 mb-1' },
+                  h('span', { className: 'text-[11px] font-semibold text-white' }, b.titel),
+                  h('span', { className: 'text-[9px] text-gray-500 whitespace-nowrap' },
+                    new Date(b.erstellt_am).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
+                  ),
+                ),
+                h('p', { className: 'text-[11px] text-gray-400 whitespace-pre-wrap' }, b.inhalt),
+                !b.gelesen && h('span', {
+                  className: 'text-[9px] text-amber-300 mt-1 inline-block',
+                  style: { textTransform: 'uppercase', letterSpacing: '0.1em' },
+                }, '• ungelesen — klick markiert als gelesen'),
+              )),
+            ),
+    ),
+  )
+}
+
+
 function DashboardPage() {
   const { token, user, logout } = useAuth()
   const [tab, setTab] = useState('aufgaben')
@@ -2444,6 +2571,7 @@ function DashboardPage() {
       h('div', { className: 'max-w-6xl mx-auto px-6 py-4 flex items-center justify-between' },
         h(Logo, { size: 'sm' }),
         h('div', { className: 'flex items-center gap-4' },
+          h(BellMenu),
           h('span', { className: 'text-sm text-bp-muted' }, `${user.vorname} ${user.nachname}`),
           h('button', { className: 'bp-btn-outline px-4 py-2 rounded-lg text-xs', onClick: logout }, 'Abmelden'),
         ),

@@ -26,6 +26,7 @@ from nachtraege import nachtraege_router
 from behinderungen import behinderungen_router
 from bedenken import bedenken_router
 from maengel import maengel_router
+from benachrichtigungen import benachrichtigungen_router
 
 structlog.configure(
     processors=[
@@ -117,3 +118,4 @@ app.include_router(nachtraege_router)
 app.include_router(behinderungen_router)
 app.include_router(bedenken_router)
 app.include_router(maengel_router)
+app.include_router(benachrichtigungen_router)
