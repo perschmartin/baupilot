@@ -1861,6 +1861,24 @@ function NachtragDetail({ id, onBack }) {
     setActionLoading(false)
   }
 
+  // E12 / AP 2.5: Protokoll als .docx vom Backend holen und browser-seitig speichern.
+  // Nutzt bpDownload, damit der Token-Refresh (Etappe 0) automatisch greift.
+  const protokollHerunterladen = async () => {
+    setActionLoading(true)
+    try {
+      const blob = await bpDownload(`/nachtraege/${id}/protokoll`, { token })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Protokoll-${nt?.nummer || 'NT'}.docx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setErr(e.detail || e.message || 'Protokoll konnte nicht erzeugt werden.')
+    }
+    setActionLoading(false)
+  }
+
   const entscheidungTreffen = async (variante) => {
     setActionLoading(true)
     try {
@@ -1926,7 +1944,16 @@ function NachtragDetail({ id, onBack }) {
         h('span', { className: 'text-gray-500 text-sm' }, '/ Nachtr\u00E4ge / '),
         h('span', { className: 'font-mono text-bp-400 text-sm font-semibold' }, nt.nummer),
       ),
-      badge(`In Pr\u00FCfung \u2014 Schritt ${aktuell}/7`, aktuell <= 4 ? 'amber' : aktuell <= 6 ? 'blue' : 'green'),
+      h('div', { className: 'flex items-center gap-3' },
+        // AP 2.5 / E12: Protokoll als .docx herunterladen \u2014 nutzt bpDownload mit Token-Refresh.
+        h('button', {
+          className: 'bp-btn-outline px-3 py-1.5 rounded-lg text-xs',
+          disabled: actionLoading,
+          onClick: protokollHerunterladen,
+          title: 'Pruefprotokoll als Word-Dokument herunterladen',
+        }, actionLoading ? '\u2026' : '\u{1F4C4} Protokoll'),
+        badge(`In Pr\u00FCfung \u2014 Schritt ${aktuell}/7`, aktuell <= 4 ? 'amber' : aktuell <= 6 ? 'blue' : 'green'),
+      ),
     ),
     err && h(Alert, { type: 'error' }, err),
 

@@ -24,7 +24,10 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
+from io import BytesIO
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -419,3 +422,46 @@ def vorlagen_liste(
     """Alle Entscheidungsvorlagen eines Nachtrags laden."""
     ev_svc = EntscheidungsvorlageService(db=db, mandant_slug=user.get("mandant_slug", ""))
     return {"vorlagen": ev_svc.lade_vorlagen(vorgang_id=nachtrag_id)}
+
+
+# ===================================================================
+# PROTOKOLLGENERIERUNG (AP 2.5, Roadmap E12)
+# ===================================================================
+
+@router.get("/{nachtrag_id}/protokoll")
+def protokoll_herunterladen(
+    nachtrag_id: UUID,
+    user: CurrentUser,
+    service: NachtragsService = Depends(_get_service),
+):
+    """Pruefprotokoll als Word-Dokument (.docx) erzeugen und streamen.
+
+    Liefert den fertig gerenderten 1-Pager mit Stammdaten, Dreiklang Q/Z/K,
+    7-Schritte-Pruefablauf, getrennter Entscheidung Grund/Hoehe (NT-F-04)
+    und NTV-Verknuepfung (NT-F-05). Reine Datenwiedergabe — G1 konform,
+    keine Interpretation oder Wertung im Text.
+
+    Quelle: NachtragsService.lade_nachtrag() liefert ein Dict, das direkt
+    an protokolle.render_nachtrag_protokoll uebergeben wird.
+    """
+    from protokolle import render_nachtrag_protokoll
+
+    try:
+        nt = service.lade_nachtrag(nachtrag_id)
+    except NachtragsError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+    doc = render_nachtrag_protokoll(nt)
+
+    # In-Memory-Buffer — kein Disk-Schreiben, damit Protokolle nirgendwo
+    # ausserhalb der DB zwischengelagert werden (G7).
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+
+    dateiname = f"Protokoll-{nt.get('nummer', 'NT')}.docx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{dateiname}"'},
+    )
