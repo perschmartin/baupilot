@@ -674,6 +674,9 @@ function VorgaengeSeite({ typ, label }) {
   if (selected && typ === 'bedenkenanzeige') {
     return h(BedenkenDetail, { id: selected, onBack: () => setSelected(null) })
   }
+  if (selected && typ === 'mangelanzeige') {
+    return h(MangelDetail, { id: selected, onBack: () => setSelected(null) })
+  }
 
   const laden = useCallback(async () => {
     setLoading(true)
@@ -725,11 +728,10 @@ function VorgaengeSeite({ typ, label }) {
         vorgaenge.map(v =>
           h('div', {
             key: v.id,
-            // AP 2.2 Drill-Down: aktiv fuer Behinderungen (E6) und Bedenken (E7).
-            // Maengel bekommen ihren Drill-Down in E8.
-            onClick: ['behinderungsanzeige', 'bedenkenanzeige'].includes(typ) ? () => setSelected(v.id) : undefined,
+            // AP 2.2 Drill-Down: alle drei Stoerungstypen haben jetzt eine Detail-Ansicht.
+            onClick: ['behinderungsanzeige', 'bedenkenanzeige', 'mangelanzeige'].includes(typ) ? () => setSelected(v.id) : undefined,
             className: 'grid grid-cols-12 gap-2 px-4 py-3 rounded-lg bg-bp-card border border-white/5 hover:border-white/10 transition items-center'
-              + (['behinderungsanzeige', 'bedenkenanzeige'].includes(typ) ? ' cursor-pointer' : ''),
+              + (['behinderungsanzeige', 'bedenkenanzeige', 'mangelanzeige'].includes(typ) ? ' cursor-pointer' : ''),
           },
             h('div', { className: 'col-span-2 font-mono text-sm text-bp-400' }, v.nummer),
             h('div', { className: 'col-span-8 text-sm text-white truncate' }, v.gegenstand),
@@ -1122,6 +1124,254 @@ function _bedPlaceholder(nr) {
     4: 'Schriftverkehr und Stellungnahmen dokumentieren.',
     5: 'Erneute Pruefung nach Schriftverkehr/Klarstellung.',
     6: 'Abmeldung des Bedenkens. Beweissicherung abgeschlossen.',
+  }
+  return t[nr] || ''
+}
+
+
+// ================================================================
+// MANGEL-DETAIL (AP 2.2c)
+// ================================================================
+// 5-Schritte-Workflow nach VOB/B §13:
+//   1 Erfassung -> 2 Mangelschreiben -> 3 Schriftverkehr
+//   -> 4 Abmeldung GU/GP -> 5 Bestaetigung Bauherr
+// Mangel-spezifisch (Migration 008):
+//   - mangelart-Enum (ausfuehrungsmangel/planungsmangel/unklar)
+//     bestimmt die Verantwortung: Ausfuehrung -> GU, Planung -> GP
+//   - Kostenuntergliederung: nachtragsfolge_eur (NT als Folge),
+//     folgekosten_betrieb_eur (laufende Betriebskosten), minderkosten_eur
+//     (Minderungsanspruch).
+//   - verlaengerung_monate fuer Gewaehrleistungsverlaengerung
+// Leitungsschritte 2 (Mangelschreiben) und 5 (Bestaetigung) erfordern PL/Admin.
+
+const MANGEL_SCHRITT_LABELS = [
+  'Erfassung', 'Mangelschreiben', 'Schriftverkehr',
+  'Abmeldung GU/GP', 'Bestaetigung Bauherr',
+]
+
+const MANGELART_LABELS = {
+  ausfuehrungsmangel: 'Ausfuehrungsmangel (GU)',
+  planungsmangel: 'Planungsmangel (GP)',
+  unklar: 'unklar / wird geprueft',
+}
+
+function MangelDetail({ id, onBack }) {
+  const { token } = useAuth()
+  const [m, setM] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+  const [actionLoading, setActionLoading] = useState(false)
+  const [schrittKommentar, setSchrittKommentar] = useState('')
+  // Stammdaten-Editierfelder. Werden beim Laden des Datensatzes synchronisiert.
+  const [editMangelart, setEditMangelart] = useState('')
+  const [editVerlaengerung, setEditVerlaengerung] = useState('')
+  const [editNFolge, setEditNFolge] = useState('')
+  const [editFKBetrieb, setEditFKBetrieb] = useState('')
+  const [editMinder, setEditMinder] = useState('')
+
+  const laden = useCallback(async () => {
+    setLoading(true)
+    try {
+      const r = await bpApi(`/maengel/${id}`, { token })
+      setM(r)
+      setEditMangelart(r.mangelart || '')
+      setEditVerlaengerung(r.verlaengerung_monate != null ? String(r.verlaengerung_monate) : '')
+      setEditNFolge(r.nachtragsfolge_eur != null ? String(r.nachtragsfolge_eur) : '')
+      setEditFKBetrieb(r.folgekosten_betrieb_eur != null ? String(r.folgekosten_betrieb_eur) : '')
+      setEditMinder(r.minderkosten_eur != null ? String(r.minderkosten_eur) : '')
+    } catch (e) { setErr(e.detail || 'Fehler beim Laden') }
+    setLoading(false)
+  }, [id, token])
+
+  useEffect(() => { laden() }, [laden])
+
+  const schrittAbschliessen = async (nr, ergebnis) => {
+    if (!ergebnis || !ergebnis.trim()) { setErr('Bitte Ergebnis eingeben.'); return }
+    setActionLoading(true)
+    try {
+      await bpApi(`/maengel/${id}/schritt/${nr}`, { method: 'POST', body: { ergebnis: ergebnis.trim() }, token })
+      setSchrittKommentar('')
+      await laden()
+    } catch (e) { setErr(e.detail || 'Fehler beim Abschluss') }
+    setActionLoading(false)
+  }
+
+  const stammdatenSpeichern = async () => {
+    // PATCH sendet nur Felder, die der Anwender ausgefuellt hat. Leere Strings
+    // werden zu null bzw. nicht uebertragen — der Service-Layer beruecksichtigt
+    // nur explizit gesetzte Felder.
+    setActionLoading(true)
+    try {
+      const body = {}
+      if (editMangelart) body.mangelart = editMangelart
+      if (editVerlaengerung !== '') body.verlaengerung_monate = parseInt(editVerlaengerung, 10)
+      if (editNFolge !== '') body.nachtragsfolge_eur = parseFloat(editNFolge)
+      if (editFKBetrieb !== '') body.folgekosten_betrieb_eur = parseFloat(editFKBetrieb)
+      if (editMinder !== '') body.minderkosten_eur = parseFloat(editMinder)
+      await bpApi(`/maengel/${id}`, { method: 'PATCH', body, token })
+      await laden()
+    } catch (e) { setErr(e.detail || 'Fehler beim Speichern') }
+    setActionLoading(false)
+  }
+
+  if (loading) return h('p', { className: 'text-bp-muted py-8 text-center' }, 'Laden...')
+  if (!m) return h('p', { className: 'text-red-400 py-8 text-center' }, err || 'Mangel nicht gefunden')
+
+  const schrittMap = {}
+  for (const s of (m.pruefschritte || [])) schrittMap[s.schritt] = s
+  const aktuell = m.aktueller_schritt || 0
+  const naechsterSchritt = Math.min(aktuell + 1, 5)
+  // Verantwortungs-Anzeige aus Mangelart abgeleitet
+  const verantwort = m.mangelart === 'ausfuehrungsmangel' ? 'Generalunternehmer (GU/AGE)'
+    : m.mangelart === 'planungsmangel' ? 'Generalplaner (GP/BWP)' : '—'
+
+  return h('div', { className: 'fade-in' },
+    h('div', { className: 'flex items-center gap-3 mb-4' },
+      h('button', { onClick: onBack, className: 'text-xs text-bp-muted hover:text-white' }, '← Zurueck zur Liste'),
+      h('span', { className: 'text-xs text-gray-600' }, '/'),
+      h('span', { className: 'text-xs font-mono text-bp-400' }, m.nummer),
+    ),
+    h('div', { className: 'flex items-center justify-between mb-6' },
+      h('div', null,
+        h('h2', { className: 'text-lg font-semibold text-white' }, '❌ ' + m.gegenstand),
+        h('p', { className: 'text-xs text-bp-muted mt-1' }, 'Mangelanzeige nach VOB/B §13 · Status: ' + (STATUS_LABELS[m.status] || m.status)),
+      ),
+      err && h('span', { className: 'text-xs text-red-400' }, err),
+    ),
+    h('div', { style: { display: 'grid', gridTemplateColumns: '280px 1fr', gap: '20px' } },
+      // === STEPPER-SIDEBAR (5 Schritte) ===
+      h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
+        h('h3', { className: 'text-xs uppercase tracking-widest text-gray-500 mb-4' }, 'Pruefschritte (5)'),
+        h('div', { className: 'flex flex-col gap-2' },
+          MANGEL_SCHRITT_LABELS.map((lbl, i) => {
+            const nr = i + 1
+            const s = schrittMap[nr]
+            const done = s && s.abgeschlossen
+            const isAktuell = nr === naechsterSchritt && !done
+            const dotBg = done ? '#4ade80' : isAktuell ? '#f5a623' : '#374151'
+            const txtCol = done ? 'text-white' : isAktuell ? 'text-amber-300' : 'text-gray-500'
+            return h('div', { key: nr, className: 'flex items-start gap-3' },
+              h('div', { className: 'mt-1', style: { width: '12px', height: '12px', borderRadius: '50%', background: dotBg, border: '2px solid #1a1a1a', boxShadow: isAktuell ? '0 0 0 2px rgba(245,166,35,0.3)' : 'none' } }),
+              h('div', { className: 'flex-1 min-w-0' },
+                h('div', { className: `text-xs font-semibold ${txtCol}` }, `${nr}. ${lbl}`),
+                s?.abgeschlossen_am && h('div', { className: 'text-[10px] text-gray-500 mt-0.5' }, new Date(s.abgeschlossen_am).toLocaleString('de-DE')),
+                done && s?.ergebnis && h('div', { className: 'text-[11px] text-gray-400 mt-1 whitespace-pre-wrap' }, s.ergebnis),
+              ),
+            )
+          }),
+        ),
+        aktuell < 5 && h('div', { className: 'mt-5 pt-5 border-t border-white/5' },
+          h('p', { className: 'text-[11px] text-gray-400 mb-2' }, `Schritt ${naechsterSchritt} (${MANGEL_SCHRITT_LABELS[naechsterSchritt - 1]}) abschliessen:`),
+          h('textarea', {
+            className: 'bp-input w-full px-3 py-2 rounded-lg text-xs',
+            rows: 3,
+            placeholder: _mangelPlaceholder(naechsterSchritt),
+            value: schrittKommentar,
+            onChange: e => setSchrittKommentar(e.target.value),
+          }),
+          h('button', {
+            className: 'bp-btn w-full px-3 py-2 rounded-lg text-xs mt-2',
+            disabled: actionLoading || !schrittKommentar.trim(),
+            onClick: () => schrittAbschliessen(naechsterSchritt, schrittKommentar),
+          }, actionLoading ? 'Laeuft...' : `✓ Schritt ${naechsterSchritt} abschliessen`),
+          [2, 5].includes(naechsterSchritt) && h('p', { className: 'text-[10px] text-amber-400/80 mt-2' }, '⚠ Nur Projektleitung und Admin'),
+        ),
+        aktuell >= 5 && h('div', { className: 'mt-5 pt-5 border-t border-white/5 rounded-lg p-3', style: { background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.25)' } },
+          h('div', { className: 'text-sm font-semibold text-green-300' }, '✓ Mangelvorgang abgeschlossen'),
+        ),
+      ),
+      // === CONTENT ===
+      h('div', null,
+        // Stammdaten + Verantwortung
+        h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5 mb-4' },
+          h('h3', { className: 'text-sm font-semibold text-white mb-4' }, 'Stammdaten'),
+          h('div', { className: 'grid grid-cols-2 gap-3 text-xs' },
+            _stamm('Nummer', m.nummer || '—'),
+            _stamm('Status', STATUS_LABELS[m.status] || m.status),
+            _stamm('Mangelart', m.mangelart ? MANGELART_LABELS[m.mangelart] || m.mangelart : '— nicht zugeordnet'),
+            _stamm('Verantwortung', verantwort),
+            _stamm('Gewaehrleistung +Monate', m.verlaengerung_monate != null ? `+${m.verlaengerung_monate}` : '—'),
+            _stamm('Frist', m.frist ? new Date(m.frist).toLocaleDateString('de-DE') : '—'),
+          ),
+          m.beschreibung && h('div', { className: 'mt-4 pt-4 border-t border-white/5' },
+            h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1.5' }, 'Beschreibung'),
+            h('p', { className: 'text-xs text-gray-300 whitespace-pre-wrap' }, m.beschreibung),
+          ),
+        ),
+        // Klassifikation + Kostenuntergliederung (editierbar)
+        h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5 mb-4' },
+          h('h3', { className: 'text-sm font-semibold text-white mb-3' }, 'Klassifikation & Kostenuntergliederung'),
+          h('p', { className: 'text-[11px] text-gray-500 mb-3' }, 'Mangelart bestimmt die Verantwortung. Die drei Kostenarten zeigen die finanzielle Auswirkung getrennt nach Quelle.'),
+          h('div', { className: 'grid grid-cols-2 gap-3' },
+            h('div', null,
+              h('label', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1 block' }, 'Mangelart'),
+              h('select', {
+                className: 'bp-input w-full px-3 py-2 rounded-lg text-xs',
+                value: editMangelart,
+                onChange: e => setEditMangelart(e.target.value),
+              },
+                h('option', { value: '' }, '— bitte wählen —'),
+                h('option', { value: 'ausfuehrungsmangel' }, 'Ausfuehrungsmangel (GU)'),
+                h('option', { value: 'planungsmangel' }, 'Planungsmangel (GP)'),
+                h('option', { value: 'unklar' }, 'unklar / wird geprueft'),
+              ),
+            ),
+            h('div', null,
+              h('label', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1 block' }, 'Gewaehrleistung +Monate'),
+              h('input', { type: 'number', min: 0, className: 'bp-input w-full px-3 py-2 rounded-lg text-xs', value: editVerlaengerung, onChange: e => setEditVerlaengerung(e.target.value), placeholder: '0' }),
+            ),
+            h('div', null,
+              h('label', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1 block' }, 'Nachtragsfolge EUR'),
+              h('input', { type: 'number', step: '0.01', className: 'bp-input w-full px-3 py-2 rounded-lg text-xs', value: editNFolge, onChange: e => setEditNFolge(e.target.value), placeholder: 'z.B. 12500' }),
+            ),
+            h('div', null,
+              h('label', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1 block' }, 'Folgekosten Betrieb EUR'),
+              h('input', { type: 'number', step: '0.01', className: 'bp-input w-full px-3 py-2 rounded-lg text-xs', value: editFKBetrieb, onChange: e => setEditFKBetrieb(e.target.value), placeholder: 'z.B. 8000' }),
+            ),
+            h('div', { className: 'col-span-2' },
+              h('label', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1 block' }, 'Minderkosten EUR'),
+              h('input', { type: 'number', step: '0.01', className: 'bp-input w-full px-3 py-2 rounded-lg text-xs', value: editMinder, onChange: e => setEditMinder(e.target.value), placeholder: 'Minderungsanspruch' }),
+            ),
+          ),
+          h('button', { className: 'bp-btn px-4 py-2 rounded-lg text-xs mt-3', disabled: actionLoading, onClick: stammdatenSpeichern },
+            actionLoading ? '…' : '💾 Stammdaten speichern',
+          ),
+        ),
+        // Dreiklang
+        h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
+          h('h3', { className: 'text-sm font-semibold text-white mb-4' }, 'Dreiklang Q/Z/K'),
+          h('div', { className: 'grid grid-cols-3 gap-3' },
+            h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
+              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Qualitaet'),
+              h('div', { className: 'text-sm text-white' }, m.qualitaet_bewertung || '—'),
+            ),
+            h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
+              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Zeit'),
+              h('div', { className: 'text-base font-bold font-mono text-white' },
+                m.zeit_arbeitstage != null ? `${m.zeit_arbeitstage > 0 ? '+' : ''}${m.zeit_arbeitstage} AT` : '—',
+              ),
+            ),
+            h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
+              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Kosten gesamt'),
+              h('div', { className: 'text-base font-bold font-mono text-white' },
+                m.kosten_eur != null ? EUR(m.kosten_eur) : '—',
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  )
+}
+
+// Hilfsfunktion: mangel-spezifischer Placeholder pro Schritt
+function _mangelPlaceholder(nr) {
+  const t = {
+    1: 'Mangel beschreiben: Lage (Raum/Bauteil), Ausmass, Datum der Feststellung.',
+    2: 'Mangelschreiben formell verfasst (VOB/B §13): Anspruch, Nachfrist, Adressat.',
+    3: 'Schriftverkehr und Stellungnahmen dokumentieren.',
+    4: 'Abmeldung durch GU oder GP (je nach Mangelart).',
+    5: 'Bauherr bestaetigt Mangelbeseitigung. Endgueltige Annahme.',
   }
   return t[nr] || ''
 }
