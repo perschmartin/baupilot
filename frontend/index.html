@@ -821,6 +821,14 @@ function ExtraktorPanel({ vorgang, reload }) {
   const [vorschlag, setVorschlag] = useState(null)
 
   const hatInhalt = Boolean(vorgang?.beschreibung)
+  // E13e: zusaetzliche Meta-Felder aus dem Extraktor-Ergebnis (Pruefschritt 1)
+  // Liegen als JSONB in pruefschritte[0].ki_ergebnis. Werden gezeigt, sobald
+  // ueberhaupt ein Vorschlag berechnet wurde — unabhaengig davon, ob er
+  // schon uebernommen wurde. So bekommt der Anwender auch Firma, Datum,
+  // LV-Position sichtbar, die nicht in vorgaenge-Spalten gemappt sind.
+  const schritt1 = (vorgang?.pruefschritte || []).find(s => s.schritt === 1)
+  const kiErgebnis = schritt1?.ki_ergebnis || null
+  const kiKonfidenz = schritt1?.ki_konfidenz
 
   const extrahieren = async () => {
     setLoading(true); setErr('')
@@ -857,14 +865,58 @@ function ExtraktorPanel({ vorgang, reload }) {
 
   // VARIANTE 1: Inhalt schon vorhanden -> Steckbrief
   if (hatInhalt) {
+    // Q/Z/K-Werte: bei Nachtraegen liegen sie in betrag_gefordert/zeitauswirkung_tage/qualitaetsauswirkung,
+    // bei Stoerungen in kosten_eur/zeit_arbeitstage/qualitaet_bewertung. Wir bevorzugen die jeweils
+    // gefuellte Variante.
+    const k = vorgang.kosten_eur ?? vorgang.betrag_gefordert
+    const z = vorgang.zeit_arbeitstage ?? vorgang.zeitauswirkung_tage
+    const q = vorgang.qualitaet_bewertung ?? vorgang.qualitaetsauswirkung
+
     return h('div', { className: 'rounded-xl p-4 mb-4', style: { background: 'rgba(74,222,128,0.04)', border: '1px solid rgba(74,222,128,0.18)' } },
-      h('div', { className: 'text-[10px] uppercase tracking-widest text-green-300/80 mb-2' }, '📋 Inhalt (aus PDF-Extraktion)'),
+      // Header mit Label und Konfidenz-Badge (rechts)
+      h('div', { className: 'flex items-center justify-between mb-2' },
+        h('div', { className: 'text-[10px] uppercase tracking-widest text-green-300/80' }, '📋 Inhalt (aus PDF-Extraktion)'),
+        kiKonfidenz != null && h('span', {
+          className: 'text-[9px] px-1.5 py-0.5 rounded',
+          style: { background: 'rgba(74,222,128,0.15)', color: '#86efac', border: '1px solid rgba(74,222,128,0.3)' },
+          title: 'Selbsteinschaetzung des LLM zum Vertrauen in das Ergebnis',
+        }, `KI-Konfidenz ${Math.round(kiKonfidenz * 100)}%`),
+      ),
+      // Beschreibung
       h('p', { className: 'text-sm text-white whitespace-pre-wrap mb-3' }, vorgang.beschreibung),
+      // E13e: zusaetzliche Meta-Felder aus ki_ergebnis als 2-Spalten-Grid.
+      // Werden nur gezeigt, wenn der Wert nicht null und nicht leer ist.
+      kiErgebnis && h('div', { className: 'grid grid-cols-2 gap-x-4 gap-y-1 text-xs pt-2 border-t border-white/5 mb-2' },
+        kiErgebnis.verantwortliche_firma && h('div', null,
+          h('span', { className: 'text-gray-500 mr-2' }, '🏢 Firma:'),
+          h('span', { className: 'text-gray-200' }, kiErgebnis.verantwortliche_firma),
+        ),
+        kiErgebnis.empfaenger && h('div', null,
+          h('span', { className: 'text-gray-500 mr-2' }, '📨 Empfänger:'),
+          h('span', { className: 'text-gray-200' }, kiErgebnis.empfaenger),
+        ),
+        kiErgebnis.datum_dokument && h('div', null,
+          h('span', { className: 'text-gray-500 mr-2' }, '📅 Datum:'),
+          h('span', { className: 'text-gray-200' }, (() => {
+            // ISO-Datum schoen formatieren, falls erkannt
+            try { return new Date(kiErgebnis.datum_dokument).toLocaleDateString('de-DE') }
+            catch { return kiErgebnis.datum_dokument }
+          })()),
+        ),
+        kiErgebnis.betroffene_lv_position && h('div', null,
+          h('span', { className: 'text-gray-500 mr-2' }, '📋 LV:'),
+          h('span', { className: 'text-gray-200' }, kiErgebnis.betroffene_lv_position),
+        ),
+        kiErgebnis.betroffenes_bauteil && h('div', null,
+          h('span', { className: 'text-gray-500 mr-2' }, '🏗️ Bauteil:'),
+          h('span', { className: 'text-gray-200' }, kiErgebnis.betroffenes_bauteil),
+        ),
+      ),
       // Q/Z/K wenn aus Extraktion uebernommen
-      (vorgang.kosten_eur != null || vorgang.zeit_arbeitstage != null || vorgang.qualitaet_bewertung) && h('div', { className: 'flex gap-4 text-xs text-gray-400 pt-2 border-t border-white/5' },
-        vorgang.kosten_eur != null && h('span', null, `💰 ${EUR(vorgang.kosten_eur)}`),
-        vorgang.zeit_arbeitstage != null && h('span', null, `⏱ ${vorgang.zeit_arbeitstage > 0 ? '+' : ''}${vorgang.zeit_arbeitstage} AT`),
-        vorgang.qualitaet_bewertung && h('span', null, `🎯 ${vorgang.qualitaet_bewertung}`),
+      (k != null || z != null || q) && h('div', { className: 'flex gap-4 text-xs text-gray-400 pt-2 border-t border-white/5' },
+        k != null && h('span', null, `💰 ${EUR(k)}`),
+        z != null && h('span', null, `⏱ ${z > 0 ? '+' : ''}${z} AT`),
+        q && h('span', null, `🎯 ${q}`),
       ),
     )
   }
