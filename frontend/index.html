@@ -656,7 +656,7 @@ function KontakteSeite() {
             // Gruppenkopf
             h('div', { className: 'flex items-center gap-2 mb-2 mt-1' },
               h('span', { className: 'text-sm' }, g.icon),
-              h('h3', { className: 'text-[11px] uppercase tracking-widest text-gray-500 font-semibold' }, g.label),
+              h('h3', { className: 'text-[11px] uppercase tracking-widest text-bp-400 font-semibold' }, g.label),
               h('span', { className: 'text-[10px] text-gray-600' }, `(${(groups[g.key] || []).length})`),
               h('span', { className: 'flex-1', style: { height: '1px', background: 'linear-gradient(90deg, rgba(255,255,255,0.08), transparent)', marginLeft: '8px' } }),
             ),
@@ -872,53 +872,57 @@ function ExtraktorPanel({ vorgang, reload }) {
     const z = vorgang.zeit_arbeitstage ?? vorgang.zeitauswirkung_tage
     const q = vorgang.qualitaet_bewertung ?? vorgang.qualitaetsauswirkung
 
-    return h('div', { className: 'rounded-xl p-4 mb-4', style: { background: 'rgba(74,222,128,0.04)', border: '1px solid rgba(74,222,128,0.18)' } },
-      // Header mit Label und Konfidenz-Badge (rechts)
-      h('div', { className: 'flex items-center justify-between mb-2' },
-        h('div', { className: 'text-[10px] uppercase tracking-widest text-green-300/80' }, '📋 Inhalt (aus PDF-Extraktion)'),
-        kiKonfidenz != null && h('span', {
-          className: 'text-[9px] px-1.5 py-0.5 rounded',
-          style: { background: 'rgba(74,222,128,0.15)', color: '#86efac', border: '1px solid rgba(74,222,128,0.3)' },
-          title: 'Selbsteinschaetzung des LLM zum Vertrauen in das Ergebnis',
-        }, `KI-Konfidenz ${Math.round(kiKonfidenz * 100)}%`),
+    // E13e/E13f: Datumsformatierung in deutsches Format. Fallback auf Roh-String, falls Parsing fehlschlaegt.
+    const fmtDatum = (d) => {
+      if (!d) return '—'
+      try { return new Date(d).toLocaleDateString('de-DE') } catch { return d }
+    }
+
+    // Zeit-Auswirkung mit Vorzeichen
+    const fmtZeit = (val) => {
+      if (val == null) return '—'
+      return (val > 0 ? '+' : '') + val + ' AT'
+    }
+
+    // Zwei Bloecke: 1. Inhalt (gruener Akzent), 2. KI-Stammdaten (Standard-Karten-Stil).
+    // Beide werden als Array zurueckgegeben — React rendert das in der Reihenfolge.
+    return [
+      // Block 1: Inhalt-Block mit gruenem Akzent
+      h('div', {
+        key: 'inhalt',
+        className: 'bg-bp-card border border-white/5 rounded-2xl p-5 mb-4',
+        style: { borderLeft: '4px solid #4ade80' },
+      },
+        h('div', { className: 'flex items-center justify-between mb-3' },
+          h('h3', { className: 'text-sm font-semibold text-white' }, '📋 Inhalt (aus PDF-Extraktion)'),
+          kiKonfidenz != null && h('span', {
+            className: 'text-[10px] px-2 py-0.5 rounded font-medium',
+            style: { background: 'rgba(74,222,128,0.15)', color: '#86efac', border: '1px solid rgba(74,222,128,0.3)' },
+            title: 'Selbsteinschaetzung des LLM zum Vertrauen in das Ergebnis',
+          }, `KI-Konfidenz ${Math.round(kiKonfidenz * 100)}%`),
+        ),
+        h('p', { className: 'text-sm text-gray-100 whitespace-pre-wrap leading-relaxed' }, vorgang.beschreibung),
       ),
-      // Beschreibung
-      h('p', { className: 'text-sm text-white whitespace-pre-wrap mb-3' }, vorgang.beschreibung),
-      // E13e: zusaetzliche Meta-Felder aus ki_ergebnis als 2-Spalten-Grid.
-      // Werden nur gezeigt, wenn der Wert nicht null und nicht leer ist.
-      kiErgebnis && h('div', { className: 'grid grid-cols-2 gap-x-4 gap-y-1 text-xs pt-2 border-t border-white/5 mb-2' },
-        kiErgebnis.verantwortliche_firma && h('div', null,
-          h('span', { className: 'text-gray-500 mr-2' }, '🏢 Firma:'),
-          h('span', { className: 'text-gray-200' }, kiErgebnis.verantwortliche_firma),
-        ),
-        kiErgebnis.empfaenger && h('div', null,
-          h('span', { className: 'text-gray-500 mr-2' }, '📨 Empfänger:'),
-          h('span', { className: 'text-gray-200' }, kiErgebnis.empfaenger),
-        ),
-        kiErgebnis.datum_dokument && h('div', null,
-          h('span', { className: 'text-gray-500 mr-2' }, '📅 Datum:'),
-          h('span', { className: 'text-gray-200' }, (() => {
-            // ISO-Datum schoen formatieren, falls erkannt
-            try { return new Date(kiErgebnis.datum_dokument).toLocaleDateString('de-DE') }
-            catch { return kiErgebnis.datum_dokument }
-          })()),
-        ),
-        kiErgebnis.betroffene_lv_position && h('div', null,
-          h('span', { className: 'text-gray-500 mr-2' }, '📋 LV:'),
-          h('span', { className: 'text-gray-200' }, kiErgebnis.betroffene_lv_position),
-        ),
-        kiErgebnis.betroffenes_bauteil && h('div', null,
-          h('span', { className: 'text-gray-500 mr-2' }, '🏗️ Bauteil:'),
-          h('span', { className: 'text-gray-200' }, kiErgebnis.betroffenes_bauteil),
+      // Block 2: KI-Extrahierte Informationen — gleicher Karten-Stil wie "Stammdaten".
+      // Alle Felder werden gezeigt, leere mit "—". So sieht der Anwender sofort,
+      // welche Felder erfolgreich extrahiert wurden und welche fehlen.
+      h('div', {
+        key: 'ki-stamm',
+        className: 'bg-bp-card border border-white/5 rounded-2xl p-5 mb-4',
+      },
+        h('h3', { className: 'text-sm font-semibold text-white mb-4' }, '🤖 KI-Extrahierte Informationen'),
+        h('div', { className: 'grid grid-cols-2 gap-3 text-xs' },
+          _stamm('Verantwortliche Firma', kiErgebnis?.verantwortliche_firma || '—'),
+          _stamm('Empfaenger', kiErgebnis?.empfaenger || '—'),
+          _stamm('Datum Dokument', fmtDatum(kiErgebnis?.datum_dokument)),
+          _stamm('LV-Position', kiErgebnis?.betroffene_lv_position || '—'),
+          _stamm('Bauteil', kiErgebnis?.betroffenes_bauteil || '—'),
+          _stamm('Auswirkung Qualitaet', q || kiErgebnis?.auswirkung_qualitaet || '—'),
+          _stamm('Auswirkung Zeit', z != null ? fmtZeit(z) : (kiErgebnis?.auswirkung_zeit_arbeitstage != null ? fmtZeit(kiErgebnis.auswirkung_zeit_arbeitstage) : '—')),
+          _stamm('Auswirkung Kosten', k != null ? EUR(k) : (kiErgebnis?.auswirkung_kosten_eur != null ? EUR(kiErgebnis.auswirkung_kosten_eur) : '—')),
         ),
       ),
-      // Q/Z/K wenn aus Extraktion uebernommen
-      (k != null || z != null || q) && h('div', { className: 'flex gap-4 text-xs text-gray-400 pt-2 border-t border-white/5' },
-        k != null && h('span', null, `💰 ${EUR(k)}`),
-        z != null && h('span', null, `⏱ ${z > 0 ? '+' : ''}${z} AT`),
-        q && h('span', null, `🎯 ${q}`),
-      ),
-    )
+    ]
   }
 
   // VARIANTE 2: Vorschlag liegt vor -> Bestaetigungs-Dialog
@@ -964,7 +968,7 @@ function ExtraktorPanel({ vorgang, reload }) {
   return h('div', { className: 'rounded-xl p-4 mb-4', style: { background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' } },
     h('div', { className: 'flex items-center justify-between gap-3' },
       h('div', null,
-        h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-500 mb-1' }, '📋 Inhalt'),
+        h('div', { className: 'text-[10px] uppercase tracking-widest text-bp-400 mb-1' }, '📋 Inhalt'),
         h('p', { className: 'text-xs text-gray-400' }, 'Noch keine Beschreibung erfasst. Inhalt aus dem verknuepften PDF extrahieren?'),
       ),
       h('button', {
@@ -1049,7 +1053,7 @@ function BehinderungDetail({ id, onBack }) {
     h('div', { style: { display: 'grid', gridTemplateColumns: '280px 1fr', gap: '20px' } },
       // === STEPPER-SIDEBAR ===
       h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
-        h('h3', { className: 'text-xs uppercase tracking-widest text-gray-500 mb-4' }, 'Pruefschritte'),
+        h('h3', { className: 'text-xs uppercase tracking-widest text-bp-400 mb-4' }, 'Pruefschritte'),
         h('div', { className: 'flex flex-col gap-2' },
           BEHA_SCHRITT_LABELS.map((lbl, i) => {
             const nr = i + 1
@@ -1111,17 +1115,17 @@ function BehinderungDetail({ id, onBack }) {
           h('h3', { className: 'text-sm font-semibold text-white mb-4' }, 'Dreiklang Q/Z/K'),
           h('div', { className: 'grid grid-cols-3 gap-3' },
             h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
-              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Qualitaet'),
+              h('div', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1' }, 'Qualitaet'),
               h('div', { className: 'text-sm text-white' }, beh.qualitaet_bewertung || '—'),
             ),
             h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
-              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Zeit'),
+              h('div', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1' }, 'Zeit'),
               h('div', { className: 'text-base font-bold font-mono text-white' },
                 beh.zeit_arbeitstage != null ? `${beh.zeit_arbeitstage > 0 ? '+' : ''}${beh.zeit_arbeitstage} AT` : '—',
               ),
             ),
             h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
-              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Kosten'),
+              h('div', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1' }, 'Kosten'),
               h('div', { className: 'text-base font-bold font-mono text-white' },
                 beh.kosten_eur != null ? EUR(beh.kosten_eur) : '—',
               ),
@@ -1136,7 +1140,7 @@ function BehinderungDetail({ id, onBack }) {
 // Hilfsfunktion: Stammdaten-Zelle
 function _stamm(label, value) {
   return h('div', null,
-    h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-0.5' }, label),
+    h('div', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-0.5' }, label),
     h('div', { className: 'text-white' }, value),
   )
 }
@@ -1240,7 +1244,7 @@ function BedenkenDetail({ id, onBack }) {
     h('div', { style: { display: 'grid', gridTemplateColumns: '280px 1fr', gap: '20px' } },
       // === STEPPER-SIDEBAR ===
       h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
-        h('h3', { className: 'text-xs uppercase tracking-widest text-gray-500 mb-4' }, 'Pruefschritte'),
+        h('h3', { className: 'text-xs uppercase tracking-widest text-bp-400 mb-4' }, 'Pruefschritte'),
         h('div', { className: 'flex flex-col gap-2' },
           BED_SCHRITT_LABELS.map((lbl, i) => {
             const nr = i + 1
@@ -1319,17 +1323,17 @@ function BedenkenDetail({ id, onBack }) {
           h('h3', { className: 'text-sm font-semibold text-white mb-4' }, 'Dreiklang Q/Z/K'),
           h('div', { className: 'grid grid-cols-3 gap-3' },
             h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
-              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Qualitaet'),
+              h('div', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1' }, 'Qualitaet'),
               h('div', { className: 'text-sm text-white' }, bed.qualitaet_bewertung || '—'),
             ),
             h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
-              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Zeit'),
+              h('div', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1' }, 'Zeit'),
               h('div', { className: 'text-base font-bold font-mono text-white' },
                 bed.zeit_arbeitstage != null ? `${bed.zeit_arbeitstage > 0 ? '+' : ''}${bed.zeit_arbeitstage} AT` : '—',
               ),
             ),
             h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
-              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Kosten'),
+              h('div', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1' }, 'Kosten'),
               h('div', { className: 'text-base font-bold font-mono text-white' },
                 bed.kosten_eur != null ? EUR(bed.kosten_eur) : '—',
               ),
@@ -1467,7 +1471,7 @@ function MangelDetail({ id, onBack }) {
     h('div', { style: { display: 'grid', gridTemplateColumns: '280px 1fr', gap: '20px' } },
       // === STEPPER-SIDEBAR (5 Schritte) ===
       h('div', { className: 'bg-bp-card border border-white/5 rounded-2xl p-5' },
-        h('h3', { className: 'text-xs uppercase tracking-widest text-gray-500 mb-4' }, 'Pruefschritte (5)'),
+        h('h3', { className: 'text-xs uppercase tracking-widest text-bp-400 mb-4' }, 'Pruefschritte (5)'),
         h('div', { className: 'flex flex-col gap-2' },
           MANGEL_SCHRITT_LABELS.map((lbl, i) => {
             const nr = i + 1
@@ -1528,7 +1532,7 @@ function MangelDetail({ id, onBack }) {
           h('p', { className: 'text-[11px] text-gray-500 mb-3' }, 'Mangelart bestimmt die Verantwortung. Die drei Kostenarten zeigen die finanzielle Auswirkung getrennt nach Quelle.'),
           h('div', { className: 'grid grid-cols-2 gap-3' },
             h('div', null,
-              h('label', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1 block' }, 'Mangelart'),
+              h('label', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1 block' }, 'Mangelart'),
               h('select', {
                 className: 'bp-input w-full px-3 py-2 rounded-lg text-xs',
                 value: editMangelart,
@@ -1541,19 +1545,19 @@ function MangelDetail({ id, onBack }) {
               ),
             ),
             h('div', null,
-              h('label', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1 block' }, 'Gewaehrleistung +Monate'),
+              h('label', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1 block' }, 'Gewaehrleistung +Monate'),
               h('input', { type: 'number', min: 0, className: 'bp-input w-full px-3 py-2 rounded-lg text-xs', value: editVerlaengerung, onChange: e => setEditVerlaengerung(e.target.value), placeholder: '0' }),
             ),
             h('div', null,
-              h('label', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1 block' }, 'Nachtragsfolge EUR'),
+              h('label', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1 block' }, 'Nachtragsfolge EUR'),
               h('input', { type: 'number', step: '0.01', className: 'bp-input w-full px-3 py-2 rounded-lg text-xs', value: editNFolge, onChange: e => setEditNFolge(e.target.value), placeholder: 'z.B. 12500' }),
             ),
             h('div', null,
-              h('label', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1 block' }, 'Folgekosten Betrieb EUR'),
+              h('label', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1 block' }, 'Folgekosten Betrieb EUR'),
               h('input', { type: 'number', step: '0.01', className: 'bp-input w-full px-3 py-2 rounded-lg text-xs', value: editFKBetrieb, onChange: e => setEditFKBetrieb(e.target.value), placeholder: 'z.B. 8000' }),
             ),
             h('div', { className: 'col-span-2' },
-              h('label', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1 block' }, 'Minderkosten EUR'),
+              h('label', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1 block' }, 'Minderkosten EUR'),
               h('input', { type: 'number', step: '0.01', className: 'bp-input w-full px-3 py-2 rounded-lg text-xs', value: editMinder, onChange: e => setEditMinder(e.target.value), placeholder: 'Minderungsanspruch' }),
             ),
           ),
@@ -1566,17 +1570,17 @@ function MangelDetail({ id, onBack }) {
           h('h3', { className: 'text-sm font-semibold text-white mb-4' }, 'Dreiklang Q/Z/K'),
           h('div', { className: 'grid grid-cols-3 gap-3' },
             h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
-              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Qualitaet'),
+              h('div', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1' }, 'Qualitaet'),
               h('div', { className: 'text-sm text-white' }, m.qualitaet_bewertung || '—'),
             ),
             h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
-              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Zeit'),
+              h('div', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1' }, 'Zeit'),
               h('div', { className: 'text-base font-bold font-mono text-white' },
                 m.zeit_arbeitstage != null ? `${m.zeit_arbeitstage > 0 ? '+' : ''}${m.zeit_arbeitstage} AT` : '—',
               ),
             ),
             h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
-              h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest mb-1' }, 'Kosten gesamt'),
+              h('div', { className: 'text-[10px] text-bp-400 uppercase tracking-widest mb-1' }, 'Kosten gesamt'),
               h('div', { className: 'text-base font-bold font-mono text-white' },
                 m.kosten_eur != null ? EUR(m.kosten_eur) : '—',
               ),
@@ -2153,20 +2157,20 @@ function NachtragDetail({ id, onBack }) {
       // Dreiklang
       h('div', { className: 'grid grid-cols-3 gap-4 mt-5 pt-5 border-t border-white/5' },
         h('div', { className: 'rounded-xl p-4 border', style: { background: 'rgba(245,166,35,0.04)', borderColor: 'rgba(245,166,35,0.2)' } },
-          h('div', { className: 'text-xs text-gray-500 uppercase tracking-widest mb-1.5' }, 'Kosten (EUR)'),
+          h('div', { className: 'text-xs text-bp-400 uppercase tracking-widest mb-1.5' }, 'Kosten (EUR)'),
           h('div', { className: 'text-xl font-bold font-mono text-bp-400' }, EUR(nt.betrag_gefordert)),
           h('div', { className: 'text-xs text-gray-500 mt-1' }, 'Gefordert (netto)'),
           nt.betrag_genehmigt != null && h('div', { className: 'text-sm text-green-300 mt-1' }, `Genehmigt: ${EUR(nt.betrag_genehmigt)}`),
         ),
         h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
-          h('div', { className: 'text-xs text-gray-500 uppercase tracking-widest mb-1.5' }, 'Zeit'),
+          h('div', { className: 'text-xs text-bp-400 uppercase tracking-widest mb-1.5' }, 'Zeit'),
           h('div', { className: 'text-xl font-bold text-white' },
             nt.zeitauswirkung_tage != null ? `${nt.zeitauswirkung_tage > 0 ? '+' : ''}${nt.zeitauswirkung_tage} ` : '\u2014',
             nt.zeitauswirkung_tage != null && h('span', { className: 'text-sm font-normal text-gray-400' }, 'Arbeitstage'),
           ),
         ),
         h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
-          h('div', { className: 'text-xs text-gray-500 uppercase tracking-widest mb-1.5' }, 'Qualit\u00E4t'),
+          h('div', { className: 'text-xs text-bp-400 uppercase tracking-widest mb-1.5' }, 'Qualit\u00E4t'),
           h('div', { className: 'text-sm font-medium text-white leading-relaxed' }, nt.qualitaetsauswirkung || '\u2014'),
         ),
       ),
@@ -2350,7 +2354,7 @@ function NachtragDetail({ id, onBack }) {
           lvDaten && lvDaten.treffer && lvDaten.treffer.length > 0 ? h('div', { className: 'flex flex-col gap-1.5' },
             // Grid Header \u2014 Spalten: LV | OZ | Kurztext | EP netto | NTV | Rel.
             // NTV-Spalte (NT-F-02): warnt vor Doppelbeauftragung an gleicher LV-Position.
-            h('div', { style: { display: 'grid', gridTemplateColumns: '60px 100px 1fr 80px 60px 50px', gap: '8px' }, className: 'px-3 py-1.5 text-[10px] text-gray-500 uppercase tracking-wider' },
+            h('div', { style: { display: 'grid', gridTemplateColumns: '60px 100px 1fr 80px 60px 50px', gap: '8px' }, className: 'px-3 py-1.5 text-[10px] text-bp-400 uppercase tracking-wider' },
               h('div', null, 'LV'), h('div', null, 'OZ'), h('div', null, 'Kurztext'), h('div', { className: 'text-right' }, 'EP netto'),
               h('div', { className: 'text-center', title: 'Bereits genehmigte Nachtr\u00E4ge an dieser LV-Position (Doppelbeauftragungs-Pr\u00FCfung)' }, 'NTV'),
               h('div', { className: 'text-right' }, 'Rel.'),
@@ -2417,11 +2421,11 @@ function NachtragDetail({ id, onBack }) {
             // Gefordert + Regionalfaktor
             h('div', { className: 'grid grid-cols-2 gap-3 mb-5' },
               h('div', { className: 'rounded-xl p-4 border', style: { background: 'rgba(245,166,35,0.08)', borderColor: 'rgba(245,166,35,0.2)' } },
-                h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest' }, 'Gefordert'),
+                h('div', { className: 'text-[10px] text-bp-400 uppercase tracking-widest' }, 'Gefordert'),
                 h('div', { className: 'text-xl font-bold font-mono text-bp-400 mt-1' }, EUR(kostenDaten.betrag_gefordert)),
               ),
               h('div', { className: 'bg-white/[.02] rounded-xl p-4 border border-white/5' },
-                h('div', { className: 'text-[10px] text-gray-500 uppercase tracking-widest' }, 'Regionalfaktor Jena'),
+                h('div', { className: 'text-[10px] text-bp-400 uppercase tracking-widest' }, 'Regionalfaktor Jena'),
                 h('div', { className: 'text-xl font-bold font-mono text-white mt-1' }, kostenDaten.bki_regionalfaktor || '\u2014'),
               ),
             ),
@@ -2450,19 +2454,19 @@ function NachtragDetail({ id, onBack }) {
                 h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }, className: 'items-center' },
                   // Referenz
                   h('div', null,
-                    h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-500' }, 'Referenz' + (v.referenzpreis_regionalisiert != null ? ' (regional)' : '')),
+                    h('div', { className: 'text-[10px] uppercase tracking-widest text-bp-400' }, 'Referenz' + (v.referenzpreis_regionalisiert != null ? ' (regional)' : '')),
                     h('div', { className: 'text-sm font-mono font-semibold text-white mt-0.5' }, EUR(ref) + (v.einheit ? ` / ${v.einheit}` : '')),
                   ),
                   // Gefordert
                   h('div', null,
-                    h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-500' }, 'Gefordert'),
+                    h('div', { className: 'text-[10px] uppercase tracking-widest text-bp-400' }, 'Gefordert'),
                     h('div', { className: 'text-sm font-mono font-semibold mt-0.5', style: { color: farbe } },
                       gefordert != null ? EUR(gefordert) : '\u2014',
                     ),
                   ),
                   // Abweichung absolut + prozentual
                   h('div', { className: 'text-right' },
-                    h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-500' }, 'Abweichung'),
+                    h('div', { className: 'text-[10px] uppercase tracking-widest text-bp-400' }, 'Abweichung'),
                     h('div', { className: 'text-base font-bold font-mono mt-0.5', style: { color: farbe } },
                       abwPct != null ? `${abwPct > 0 ? '+' : ''}${Number(abwPct).toLocaleString('de-DE', { maximumFractionDigits: 1 })} %` : '\u2014',
                     ),
@@ -2507,13 +2511,13 @@ function NachtragDetail({ id, onBack }) {
               return h('div', { className: 'rounded-xl p-4', style: { background: bgVariante, border: `1px solid ${borderVariante}` } },
                 h('div', { className: 'flex items-center justify-between mb-3' },
                   h('div', { className: 'text-base font-bold text-white' }, `Variante ${nt.nachtragsvariante}`),
-                  h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-400' },
+                  h('div', { className: 'text-[10px] uppercase tracking-widest text-bp-400' },
                     nt.nachtragsvariante === 'A' ? 'Genehmigt' : nt.nachtragsvariante === 'B' ? 'Teilweise' : 'Abgelehnt',
                   ),
                 ),
                 // Dem Grunde nach
                 h('div', { className: 'mb-3' },
-                  h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-500 mb-1' }, 'Dem Grunde nach'),
+                  h('div', { className: 'text-[10px] uppercase tracking-widest text-bp-400 mb-1' }, 'Dem Grunde nach'),
                   h('div', { className: 'text-sm font-semibold', style: { color: grundJa ? '#4ade80' : grundNein ? '#f87171' : '#9ca3af' } },
                     grundJa ? '\u2713 Anerkannt' : grundNein ? '\u2717 Zur\u00FCckgewiesen' : '\u2014 nicht gesetzt',
                   ),
@@ -2521,7 +2525,7 @@ function NachtragDetail({ id, onBack }) {
                 ),
                 // Der Hoehe nach (nur wenn relevant, d.h. nicht Variante C)
                 nt.nachtragsvariante !== 'C' && h('div', null,
-                  h('div', { className: 'text-[10px] uppercase tracking-widest text-gray-500 mb-1' }, 'Der H\u00F6he nach'),
+                  h('div', { className: 'text-[10px] uppercase tracking-widest text-bp-400 mb-1' }, 'Der H\u00F6he nach'),
                   h('div', { className: 'text-sm font-semibold', style: { color: hoeheJa ? '#4ade80' : hoeheNein ? '#f5a623' : '#9ca3af' } },
                     hoeheJa ? '\u2713 Anerkannt' : hoeheNein ? '\u26A0 Strittig / Nachverhandlung' : '\u2014 nicht gesetzt',
                   ),
@@ -2532,7 +2536,7 @@ function NachtragDetail({ id, onBack }) {
             // INPUT-Ansicht: zwei Textareas + 3 Karten
             return h('div', null,
               h('div', { className: 'mb-5' },
-                h('label', { className: 'block text-[11px] uppercase tracking-widest text-gray-500 mb-1.5' }, 'Begr\u00FCndung dem Grunde nach'),
+                h('label', { className: 'block text-[11px] uppercase tracking-widest text-bp-400 mb-1.5' }, 'Begr\u00FCndung dem Grunde nach'),
                 h('textarea', {
                   className: 'bp-input w-full px-3 py-2 rounded-lg text-xs',
                   rows: 3,
@@ -2543,7 +2547,7 @@ function NachtragDetail({ id, onBack }) {
                 }),
               ),
               h('div', { className: 'mb-5' },
-                h('label', { className: 'block text-[11px] uppercase tracking-widest text-gray-500 mb-1.5' }, 'Begr\u00FCndung der H\u00F6he nach'),
+                h('label', { className: 'block text-[11px] uppercase tracking-widest text-bp-400 mb-1.5' }, 'Begr\u00FCndung der H\u00F6he nach'),
                 h('textarea', {
                   className: 'bp-input w-full px-3 py-2 rounded-lg text-xs',
                   rows: 3,
@@ -2764,7 +2768,7 @@ function BellMenu() {
       },
     },
       h('div', { className: 'flex items-center justify-between mb-2' },
-        h('span', { className: 'text-xs uppercase tracking-widest text-gray-500' }, 'Benachrichtigungen'),
+        h('span', { className: 'text-xs uppercase tracking-widest text-bp-400' }, 'Benachrichtigungen'),
         ungelesen > 0 && h('button', {
           className: 'text-[11px] text-bp-400 hover:underline',
           onClick: alleGelesen,
