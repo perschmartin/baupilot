@@ -44,17 +44,52 @@ if ($OnlyTyp) { Log "Filter: nur Typ '$OnlyTyp'" "Yellow" }
 if ($MaxAnzahl -gt 0) { Log "Limit: max $MaxAnzahl Vorgaenge" "Yellow" }
 
 # --- Login ---
-try {
+# Wir kapseln den Login in eine Funktion, damit wir bei 401-Antworten waehrend
+# des Nachtlaufs einen frischen Token holen koennen (Access-Token TTL = 15 min,
+# der Lauf dauert mehrere Stunden). Token wird im Skript-Scope gehalten.
+function Get-FreshToken {
     $loginBody = @{ email = $Email; passwort = $Passwort } | ConvertTo-Json
     $r = Invoke-RestMethod -Uri "$ApiUrl/auth/login" -Method Post -ContentType "application/json" -Body $loginBody
-    $token = $r.access_token
-    if (-not $token) { throw "kein access_token" }
+    if (-not $r.access_token) { throw "kein access_token" }
+    return $r.access_token
+}
+
+try {
+    $script:token = Get-FreshToken
     Log "Login OK." "Green"
 } catch {
     Log "Login fehlgeschlagen: $_" "Red"
     exit 1
 }
-$headers = @{ Authorization = "Bearer $token" }
+
+# Wrapper fuer API-Calls mit automatischem Token-Refresh bei 401.
+# Versucht einmal zu refreshen, wenn das fehlschlaegt, wirft die Originalausnahme.
+function Invoke-Api {
+    param(
+        [string]$Uri,
+        [string]$Method = "Get",
+        [int]$TimeoutSec = 60
+    )
+    try {
+        return Invoke-RestMethod -Uri $Uri -Method $Method `
+            -Headers @{ Authorization = "Bearer $script:token" } `
+            -TimeoutSec $TimeoutSec
+    } catch {
+        if ($_.Exception.Response.StatusCode -eq 401) {
+            # Token erneuern und einmal wiederholen
+            try {
+                $script:token = Get-FreshToken
+                Log "    ↻ Token erneuert" "DarkCyan"
+            } catch {
+                throw "Token-Refresh fehlgeschlagen: $_"
+            }
+            return Invoke-RestMethod -Uri $Uri -Method $Method `
+                -Headers @{ Authorization = "Bearer $script:token" } `
+                -TimeoutSec $TimeoutSec
+        }
+        throw
+    }
+}
 
 # --- Vorgaenge mit verknuepftem PDF holen (via direktem DB-Query waere
 # eleganter, aber wir nutzen die API zur Konsistenz) ---
@@ -62,7 +97,7 @@ $headers = @{ Authorization = "Bearer $token" }
 # pruefen ob er verknuepftes Dokument hat.
 
 function Get-VorgaengeMitPdf($typ) {
-    $r = Invoke-RestMethod -Uri "$ApiUrl/vorgaenge/?projekt=$Projekt&typ=$typ&limit=500" -Headers $headers
+    $r = Invoke-Api -Uri "$ApiUrl/vorgaenge/?projekt=$Projekt&typ=$typ&limit=500" -TimeoutSec 60
     return $r.vorgaenge
 }
 
@@ -102,10 +137,9 @@ foreach ($v in $todo) {
 
     Log "[$idx/$($stat.gesamt)] $($v.typ) $($v.nummer) ... $eta" "DarkGray"
 
-    # POST /vorschlag (lange Operation, kann 60s+)
+    # POST /vorschlag (lange Operation, kann 60s+) — nutzt Invoke-Api mit Auto-Refresh
     try {
-        $resp = Invoke-RestMethod -Uri "$ApiUrl/extraktion/$($v.id)/vorschlag" `
-            -Method Post -Headers $headers -TimeoutSec 240
+        $resp = Invoke-Api -Uri "$ApiUrl/extraktion/$($v.id)/vorschlag" -Method Post -TimeoutSec 240
         $vorschlag = $resp.vorschlag
         $konf = [double]($vorschlag.konfidenz ?? 0)
         $besch_short = if ($vorschlag.beschreibung) { $vorschlag.beschreibung.Substring(0, [math]::Min(80, $vorschlag.beschreibung.Length)) } else { '(leer)' }
@@ -113,8 +147,7 @@ foreach ($v in $todo) {
 
         if (-not $KeineUebernahme -and $konf -ge $KonfidenzSchwelle) {
             try {
-                Invoke-RestMethod -Uri "$ApiUrl/extraktion/$($v.id)/uebernehmen" `
-                    -Method Post -Headers $headers -TimeoutSec 60 | Out-Null
+                Invoke-Api -Uri "$ApiUrl/extraktion/$($v.id)/uebernehmen" -Method Post -TimeoutSec 60 | Out-Null
                 $stat.uebernommen++
                 Log "    ✓ uebernommen" "Green"
             } catch {
