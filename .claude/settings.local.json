@@ -1,0 +1,97 @@
+{
+  "$schema": "https://docs.claude.com/schemas/settings.json",
+  "_kommentar": [
+    "Project-lokale Allowlist fuer Claude Code im BauPilot-Projekt.",
+    "Erstellt 22.05.2026 von Martin/Claude — Autonomes Arbeiten waehrend Pipeline-Laeufen.",
+    "WICHTIG: 'docker compose up/build' ist BEWUSST nicht freigegeben (Memory-Regel:",
+    "killt laufende Batch-Jobs). 'docker restart' ist OK fuer gezielte Service-Restarts.",
+    "Ebenfalls nicht freigegeben: rm -rf, git push --force, sudo, git rebase -i."
+  ],
+  "permissions": {
+    "allow": [
+      "Bash(docker exec baupilot-api:*)",
+      "Bash(docker exec baupilot-postgres:*)",
+      "Bash(docker exec baupilot-frontend:*)",
+      "Bash(docker exec baupilot-minio:*)",
+      "Bash(docker exec -i baupilot-api:*)",
+      "Bash(docker exec -i baupilot-postgres:*)",
+      "Bash(docker exec -d baupilot-api:*)",
+      "Bash(docker cp:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker inspect:*)",
+      "Bash(docker restart baupilot-api)",
+      "Bash(docker restart baupilot-frontend)",
+      "Bash(docker restart baupilot-litellm)",
+      "Bash(MSYS_NO_PATHCONV=1 docker:*)",
+
+      "Bash(pwsh -NoProfile -ExecutionPolicy Bypass -File:*)",
+      "Bash(pwsh -NoProfile -Command:*)",
+      "Bash(pwsh --version)",
+      "Bash(powershell -Command:*)",
+      "Bash(powershell -NoProfile -Command:*)",
+      "Bash(bash *.sh)",
+      "Bash(bash /c/Tools/claude-sandbox/*)",
+      "Bash(bash C:/Tools/claude-sandbox/*)",
+
+      "Bash(cat:*)",
+      "Bash(tail:*)",
+      "Bash(head:*)",
+      "Bash(ls:*)",
+      "Bash(ls -la:*)",
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(cp:*)",
+      "Bash(mkdir:*)",
+      "Bash(chmod +x:*)",
+      "Bash(date)",
+      "Bash(date -u)",
+      "Bash(sleep:*)",
+      "Bash(echo:*)",
+      "Bash(where.exe:*)",
+      "Bash(curl:*)",
+      "Bash(curl -s:*)",
+      "Bash(curl -X POST:*)",
+
+      "Bash(tasklist)",
+      "Bash(taskkill:*)",
+
+      "Read(P:\\Obsidian\\Martin\\03_Projekte\\Baupilot\\**)",
+      "Read(P:\\Datenuebergabe FLI\\**)",
+      "Read(P:\\Datenübergabe FLI\\**)",
+      "Read(C:\\SPARK\\spark-baupilot\\**)",
+      "Read(C:\\Tools\\baupilot.work\\**)",
+      "Read(C:\\Tools\\claude-sandbox\\**)",
+
+      "Write(C:\\SPARK\\spark-baupilot\\**)",
+      "Write(C:\\Tools\\baupilot.work\\**)",
+      "Write(C:\\Tools\\claude-sandbox\\**)",
+      "Write(P:\\Obsidian\\Martin\\03_Projekte\\Baupilot\\**)",
+
+      "Edit(C:\\SPARK\\spark-baupilot\\**)",
+      "Edit(C:\\Tools\\baupilot.work\\**)",
+      "Edit(C:\\Tools\\claude-sandbox\\**)",
+      "Edit(P:\\Obsidian\\Martin\\03_Projekte\\Baupilot\\**)",
+
+      "mcp__ccd_session__mark_chapter",
+      "mcp__ccd_session__spawn_task"
+    ],
+    "deny": [
+      "Bash(docker compose up:*)",
+      "Bash(docker compose -f * up:*)",
+      "Bash(docker compose build:*)",
+      "Bash(docker compose -f * build:*)",
+      "Bash(docker compose down:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker rmi:*)",
+      "Bash(docker volume rm:*)",
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git rebase -i:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(sudo:*)"
+    ]
+  }
+}

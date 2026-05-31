@@ -21,7 +21,7 @@ def health_check(db: Session = Depends(get_db)) -> dict:
     return {
         "status": "ok" if db_status == "ok" else "degraded",
         "service": "baupilot-api",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "database": db_status,
     }
 
@@ -31,6 +31,6 @@ def root() -> dict:
     """Basis-Endpunkt."""
     return {
         "service": "BauPilot API",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "docs": "/docs",
     }

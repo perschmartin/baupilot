@@ -32,6 +32,8 @@ TENANT_EXEMPT_PREFIXES = (
     "/api/v1/benachrichtigungen",  # E10, B-012
     "/api/v1/tags",             # E11, B-013
     "/api/v1/extraktion",       # E13b, AP 2.6 erste Stufe
+    "/api/v1/ergebnis",         # E15, Saeule 3 vorgezogen — Ergebnis-Seite
+    "/api/v1/chat",             # E16, BauPilot-Chatbot (Tool-Use + Streaming)
 )
 class TenantMiddleware(BaseHTTPMiddleware):
     """Extrahiert den Mandanten-Slug aus dem Request-Header."""

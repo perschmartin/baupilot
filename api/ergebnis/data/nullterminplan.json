@@ -1,0 +1,91 @@
+{
+  "projekt": "Forschungsinstitut fuer Lebensmittel Jena",
+  "stand": "2024-08 (ARGE-Hochrechnung, BWP-Zusammenfassung 2024-10-31)",
+  "quelle_datei": "241031_JFLI_Soll_Ist_Zusammen_BWP.xlsx",
+  "hinweis": "Bauteilphasen aggregiert aus L1-Sammelvorgaengen (J30-J34_1/2/3, Aussenanlagen). J34 ist Min/Max-Aggregat der drei Teilbereiche. Echter Nullterminplan vor Vergabe noch nicht extrahiert.",
+  "soll_bauzeit_monate": 29,
+  "ist_verzug_monate": 32,
+  "ag_leistung_anfang": "2023-05-09",
+  "ag_leistung_ende": "2025-05-26",
+  "phasen": [
+    {
+      "bauteil_kennung": "GEB30",
+      "phase": "Bauphase (ARGE-Hochrechnung Aug 2024)",
+      "soll_start": "2024-07-15",
+      "soll_ende": "2025-05-21",
+      "quelle_rows": [
+        1854
+      ]
+    },
+    {
+      "bauteil_kennung": "GEB31",
+      "phase": "Bauphase (ARGE-Hochrechnung Aug 2024)",
+      "soll_start": "2024-04-18",
+      "soll_ende": "2025-08-21",
+      "quelle_rows": [
+        1628
+      ]
+    },
+    {
+      "bauteil_kennung": "GEB32",
+      "phase": "Bauphase (ARGE-Hochrechnung Aug 2024)",
+      "soll_start": "2024-05-22",
+      "soll_ende": "2025-11-05",
+      "quelle_rows": [
+        1358
+      ]
+    },
+    {
+      "bauteil_kennung": "GEB33",
+      "phase": "Bauphase (ARGE-Hochrechnung Aug 2024)",
+      "soll_start": "2024-04-30",
+      "soll_ende": "2025-12-12",
+      "quelle_rows": [
+        1107
+      ]
+    },
+    {
+      "bauteil_kennung": "GEB34",
+      "phase": "Bauphase (ARGE-Hochrechnung Aug 2024)",
+      "soll_start": "2024-02-02",
+      "soll_ende": "2025-12-12",
+      "quelle_rows": [
+        456,
+        660,
+        880
+      ]
+    },
+    {
+      "bauteil_kennung": "AUSS",
+      "phase": "Bauphase (ARGE-Hochrechnung Aug 2024)",
+      "soll_start": "2024-06-14",
+      "soll_ende": "2025-03-13",
+      "quelle_rows": [
+        1935,
+        1936,
+        1952,
+        1974,
+        1992,
+        1999
+      ]
+    }
+  ],
+  "meilensteine": [
+    {
+      "name": "AG Leistung",
+      "soll_datum": "2025-05-26"
+    },
+    {
+      "name": "Fertigstellungstermine Ausbau",
+      "soll_datum": "2026-02-03"
+    },
+    {
+      "name": "Inbetriebnahme",
+      "soll_datum": "2026-04-30"
+    },
+    {
+      "name": "Zustandsfeststellung",
+      "soll_datum": "2026-05-11"
+    }
+  ]
+}

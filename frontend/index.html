@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BauPilot — Digitale Projektsteuerung</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
 <script>
 tailwind.config = {
   theme: {
@@ -42,7 +45,7 @@ tailwind.config = {
 <body>
 <div id="root"></div>
 <script type="module">
-import { createElement as h, useState, useEffect, useCallback, createContext, useContext } from 'https://esm.sh/react@18.3.1'
+import { createElement as h, useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } from 'https://esm.sh/react@18.3.1'
 import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client'
 
 // ================================================================
@@ -2811,19 +2814,37 @@ function DashboardPage() {
   const { token, user, logout } = useAuth()
   const [tab, setTab] = useState('aufgaben')
   const [showPw, setShowPw] = useState(false)
+  const [openDropdown, setOpenDropdown] = useState(null)   // 'vorgaenge' | null
+
+  // Klick ausserhalb schliesst Dropdown (Memory: Hook VOR conditional return)
+  useEffect(() => {
+    if (!openDropdown) return
+    const onClick = (e) => {
+      if (!e.target.closest('[data-dropdown]')) setOpenDropdown(null)
+    }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [openDropdown])
 
   if (!user) return h('div', { className: 'min-h-screen flex items-center justify-center' },
     h('p', { className: 'text-bp-muted' }, 'Laden...'))
 
+  const VORGAENGE_KINDER = ['nachtraege', 'behinderungen', 'bedenken', 'maengel']
+
   const tabs = [
     { id: 'aufgaben', label: 'Aufgaben' },
-    { id: 'nachtraege', label: 'Nachtr\u00E4ge' },
-    { id: 'behinderungen', label: 'Behinderungen' },
-    { id: 'bedenken', label: 'Bedenken' },
-    { id: 'maengel', label: 'M\u00E4ngel' },
+    { id: 'vorgaenge', label: 'Vorg\u00E4nge', children: [
+      { id: 'nachtraege', label: 'Nachtr\u00E4ge' },
+      { id: 'behinderungen', label: 'Behinderungen' },
+      { id: 'bedenken', label: 'Bedenken' },
+      { id: 'maengel', label: 'M\u00E4ngel' },
+    ]},
     { id: 'lv', label: 'LV' },
     { id: 'kontakte', label: 'Kontakte' },
     { id: 'dokumente', label: 'Dokumente' },
+    { id: 'ergebnis', label: 'Ergebnis' },
+    { id: 'netzplan', label: 'Netzplan' },
+    { id: 'lv_auswertung', label: 'LV-Auswertung' },
     { id: 'profil', label: 'Profil' },
   ]
 
@@ -2840,13 +2861,40 @@ function DashboardPage() {
       ),
       // Tab-Navigation
       h('div', { className: 'max-w-6xl mx-auto px-6 flex gap-1' },
-        tabs.map(t => h('button', {
-          key: t.id,
-          className: `px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
-            tab === t.id ? 'text-bp-400 border-bp-400' : 'text-bp-muted border-transparent hover:text-white hover:border-white/20'
-          }`,
-          onClick: () => setTab(t.id),
-        }, t.label)),
+        tabs.map(t => {
+          // Parent-Tab mit Children: Dropdown-Menü
+          if (t.children) {
+            const isAktivKind = VORGAENGE_KINDER.includes(tab)
+            const isOpen = openDropdown === t.id
+            return h('div', { key: t.id, className: 'relative', 'data-dropdown': true },
+              h('button', {
+                className: `px-4 py-2 text-sm font-medium transition-colors border-b-2 inline-flex items-center gap-1 ${
+                  isAktivKind || isOpen ? 'text-bp-400 border-bp-400' : 'text-bp-muted border-transparent hover:text-white hover:border-white/20'
+                }`,
+                onClick: () => setOpenDropdown(isOpen ? null : t.id),
+              }, t.label, h('span', { className: 'text-[10px] ml-1' }, '▾')),
+              isOpen && h('div', {
+                className: 'absolute top-full left-0 mt-0 bg-bp-card border border-white/10 rounded-b-md shadow-xl min-w-[180px] z-20',
+              },
+                t.children.map(c => h('button', {
+                  key: c.id,
+                  className: `block w-full text-left px-4 py-2 text-sm transition-colors ${
+                    tab === c.id ? 'bg-white/5 text-bp-400 font-medium' : 'text-bp-muted hover:bg-white/5 hover:text-white'
+                  }`,
+                  onClick: () => { setTab(c.id); setOpenDropdown(null) },
+                }, c.label)),
+              ),
+            )
+          }
+          // Normaler Tab
+          return h('button', {
+            key: t.id,
+            className: `px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
+              tab === t.id ? 'text-bp-400 border-bp-400' : 'text-bp-muted border-transparent hover:text-white hover:border-white/20'
+            }`,
+            onClick: () => setTab(t.id),
+          }, t.label)
+        }),
       ),
     ),
     // Content
@@ -2859,6 +2907,9 @@ function DashboardPage() {
       tab === 'lv' && h(LVSeite),
       tab === 'kontakte' && h(KontakteSeite),
       tab === 'dokumente' && h(DokumenteSeite),
+      tab === 'ergebnis' && h(ErgebnisSeite),
+      tab === 'netzplan' && h(NetzplanSeite),
+      tab === 'lv_auswertung' && h(LvAuswertungSeite),
       tab === 'profil' && h(ProfilSeite, { showPw, setShowPw }),
     ),
   )
@@ -3271,7 +3322,2744 @@ function EinladungForm({ token }) {
 }
 
 // ================================================================
+// ERGEBNIS-SEITE (Säule 3 vorgezogen — 4 Visualisierungen)
+// Gantt mit Störungsbändern · Sankey Verursacher · Wasserfall Q/Z/K · Heatmap
+// Datenquelle: /api/v1/ergebnis/{vorgaenge,nullterminplan,kennzahlen,firmen,bauteile}
+// Charts: Plotly.js (global window.Plotly)
+// ================================================================
+
+// Farb-Schema fuer Vorgangstypen — durchgehend in allen 4 Charts.
+const TYP_FARBE = {
+  behinderungsanzeige: '#f5a623',   // amber (BauPilot-Akzent)
+  bedenkenanzeige:     '#3b82f6',   // blau
+  mangelanzeige:       '#ef4444',   // rot
+  nachtrag:            '#10b981',   // gruen
+}
+const TYP_LABEL = {
+  behinderungsanzeige: 'BehA',
+  bedenkenanzeige:     'BED',
+  mangelanzeige:       'MA',
+  nachtrag:            'NT',
+}
+
+function ErgebnisSeite() {
+  const { token } = useAuth()
+  // --- Datenzustand ---
+  const [vorgaenge, setVorgaenge] = useState([])
+  const [plan, setPlan] = useState(null)
+  const [kpi, setKpi] = useState({})
+  const [firmen, setFirmen] = useState([])
+  const [bauteile, setBauteile] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+  // --- UI-Zustand ---
+  const [activeChart, setActiveChart] = useState('gantt')
+  const [yAchse, setYAchse] = useState('bauteil')   // bauteil | typ | verursacher
+  const [reloadTick, setReloadTick] = useState(0)
+  const [autoReload, setAutoReload] = useState(false)
+  const [pipeline, setPipeline] = useState(null)
+  const [fTyp, setFTyp] = useState([])
+  const [fVerursacher, setFVerursacher] = useState([])
+  const [fBauteil, setFBauteil] = useState([])
+  const [fBestaetigt, setFBestaetigt] = useState(false)
+  const [selectedId, setSelectedId] = useState(null)
+
+  // Filter -> Query-String
+  const qs = useMemo(() => {
+    const p = new URLSearchParams()
+    fTyp.forEach(t => p.append('typ', t))
+    fVerursacher.forEach(v => p.append('verursacher', v))
+    fBauteil.forEach(b => p.append('bauteil', b))
+    if (fBestaetigt) p.set('nur_bestaetigt', 'true')
+    return p.toString()
+  }, [fTyp, fVerursacher, fBauteil, fBestaetigt])
+
+  // Daten laden (bei Filter-Aenderung)
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setLoading(true); setErr('')
+      try {
+        const [v, n, k, fr, bt] = await Promise.all([
+          bpApi(`/ergebnis/vorgaenge?${qs}`, { token }),
+          bpApi('/ergebnis/nullterminplan', { token }),
+          bpApi(`/ergebnis/kennzahlen?${qs}`, { token }),
+          bpApi('/ergebnis/firmen', { token }),
+          bpApi('/ergebnis/bauteile', { token }),
+        ])
+        if (cancelled) return
+        setVorgaenge(v.vorgaenge || [])
+        setPlan(n)
+        setKpi(k)
+        setFirmen(fr.firmen || [])
+        setBauteile(bt.bauteile || [])
+      } catch (e) {
+        if (!cancelled) setErr(e.detail || 'Daten konnten nicht geladen werden.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [token, qs, reloadTick])
+
+  // Optionales Auto-Reload alle 60 sec, waehrend der Batch laeuft.
+  useEffect(() => {
+    if (!autoReload) return
+    const t = setInterval(() => setReloadTick(x => x + 1), 60000)
+    return () => clearInterval(t)
+  }, [autoReload])
+
+  // Pipeline-Status separat — pollt alle 15 sec, weil leichtgewichtig.
+  useEffect(() => {
+    let cancelled = false
+    async function pollPipeline() {
+      try {
+        const p = await bpApi('/ergebnis/pipeline-status', { token })
+        if (!cancelled) setPipeline(p)
+      } catch {/* still */}
+    }
+    pollPipeline()
+    const t = setInterval(pollPipeline, 15000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [token])
+
+  // Multi-Toggle Helfer
+  const togglify = (setter, current) => (val) => {
+    setter(current.includes(val) ? current.filter(x => x !== val) : [...current, val])
+  }
+
+  // --- Render (Hooks fertig — ab hier sind conditional returns ok) ---
+  return h('div', { className: 'space-y-4 fade-in' },
+    h('div', { className: 'flex items-end justify-between flex-wrap gap-3' },
+      h('div', null,
+        h('h2', { className: 'text-2xl font-semibold text-white' }, 'Ergebnis-Übersicht'),
+        h('p', { className: 'text-xs text-bp-muted mt-1' },
+          'Säule 3 (Termincontrolling) — Prototyp. Nullterminplan vorläufig, Asta-X83-Import folgt.'),
+      ),
+      h('div', { className: 'flex items-center gap-2 text-xs' },
+        h('label', { className: 'flex items-center gap-1 text-bp-muted cursor-pointer' },
+          h('input', { type: 'checkbox', checked: autoReload, onChange: e => setAutoReload(e.target.checked) }),
+          'Auto-Refresh (60 s)'),
+        h('button', {
+          className: 'bp-btn-outline px-3 py-1.5 rounded-lg text-xs',
+          onClick: () => setReloadTick(x => x + 1),
+          disabled: loading,
+        }, loading ? 'Lade …' : '↻ Aktualisieren'),
+      ),
+    ),
+
+    // Pipeline-Status (Live)
+    pipeline && h(PipelineCard, { pipeline }),
+
+    // KPI-Bar
+    h(KennzahlenBar, { kpi }),
+
+    // Filter
+    h(FilterHeader, {
+      firmen, bauteile,
+      fTyp, fVerursacher, fBauteil, fBestaetigt,
+      toggleTyp:         togglify(setFTyp, fTyp),
+      toggleVerursacher: togglify(setFVerursacher, fVerursacher),
+      toggleBauteil:     togglify(setFBauteil, fBauteil),
+      setBestaetigt: setFBestaetigt,
+      reset: () => { setFTyp([]); setFVerursacher([]); setFBauteil([]); setFBestaetigt(false) },
+    }),
+
+    // Chart-Sub-Tabs
+    h('div', { className: 'flex gap-1 border-b border-white/10' },
+      [
+        { id: 'gantt',      label: 'Gantt · Soll-Ist mit Störungsbändern' },
+        { id: 'sankey',     label: 'Sankey · Verursacher → Vorgang' },
+        { id: 'wasserfall', label: 'Wasserfall · Q/Z/K Schaden' },
+        { id: 'heatmap',    label: 'Heatmap · Verursacher × Bauteil' },
+      ].map(c => h('button', {
+        key: c.id,
+        className: `px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+          activeChart === c.id
+            ? 'text-bp-400 border-bp-400'
+            : 'text-bp-muted border-transparent hover:text-white'
+        }`,
+        onClick: () => setActiveChart(c.id),
+      }, c.label)),
+    ),
+
+    // Chart-Body
+    err ? h('p', { className: 'text-red-400 text-sm py-8 text-center' }, err)
+    : loading ? h('p', { className: 'text-bp-muted text-sm py-12 text-center animate-pulse' }, 'Lade Daten …')
+    : h('div', { className: 'bg-bp-card rounded-lg p-4 min-h-[500px]' },
+        vorgaenge.length === 0
+          ? h('p', { className: 'text-bp-muted text-sm py-12 text-center' },
+              'Keine Vorgänge im aktuellen Filter — bitte Filter zurücksetzen oder warten, bis der Extraktions-Lauf weitere Vorgänge mit Verursacher befüllt hat.')
+          : activeChart === 'gantt'      ? h('div', null,
+              h('div', { className: 'flex items-center gap-2 mb-3 text-xs' },
+                h('span', { className: 'text-[10px] text-bp-muted uppercase tracking-wider mr-2' }, 'Y-Achse'),
+                [
+                  { id: 'bauteil',     label: 'Bauteil',     hint: 'mit Soll-Phasen' },
+                  { id: 'typ',         label: 'Vorgangstyp', hint: 'BehA/BED/MA/NT' },
+                  { id: 'verursacher', label: 'Verursacher', hint: 'Firma' },
+                ].map(o => h('button', {
+                  key: o.id, onClick: () => setYAchse(o.id),
+                  className: `px-2 py-1 rounded-full text-[11px] border transition ${
+                    yAchse === o.id
+                      ? 'bg-bp-400 text-bp-dark border-bp-400 font-medium'
+                      : 'bg-transparent text-bp-muted border-white/10 hover:border-bp-400 hover:text-white'
+                  }`,
+                  title: o.hint,
+                }, o.label)),
+                h('span', { className: 'text-[10px] text-bp-muted ml-2 italic' },
+                  yAchse === 'bauteil' ? '(Soll-Phasen sichtbar)' : '(Soll-Phasen nur bei Bauteil-Y verfügbar)'),
+              ),
+              h(GanttChart, { vorgaenge, plan, yAchse, onSelect: setSelectedId }),
+            )
+          : activeChart === 'sankey'     ? h(SankeyChart,     { vorgaenge })
+          : activeChart === 'wasserfall' ? h(WasserfallChart, { vorgaenge, onSelect: setSelectedId })
+          : activeChart === 'heatmap'    ? h(HeatmapChart,    { vorgaenge })
+          : null
+      ),
+
+    // Detail-Modal (auf Klick eines Markers)
+    selectedId && h(VorgangModal, {
+      vorgang: vorgaenge.find(v => v.id === selectedId),
+      onClose: () => setSelectedId(null),
+    }),
+
+    // Hinweis-Fußzeile
+    h('p', { className: 'text-[10px] text-bp-muted leading-snug' },
+      `Stand: ${vorgaenge.length} Vorgänge im Filter · `,
+      `davon ${vorgaenge.filter(v => v.verursacher_name).length} mit Verursacher · `,
+      `Datenbasis wächst, während der LLM-Extraktions-Nachtlauf läuft.`),
+  )
+}
+
+// ---- KPI-Bar -----------------------------------------------------------
+
+function KennzahlenBar({ kpi }) {
+  const eur = (n) => n ? Number(n).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' €' : '—'
+  const num = (n) => n ? Number(n).toLocaleString('de-DE') : '0'
+  return h('div', { className: 'grid grid-cols-2 md:grid-cols-6 gap-2' },
+    h(KpiCell, { label: 'Vorgänge', value: num(kpi.anzahl_gesamt), sub: `BehA ${kpi.anzahl_beha||0} · BED ${kpi.anzahl_bed||0} · MA ${kpi.anzahl_ma||0} · NT ${kpi.anzahl_nt||0}` }),
+    h(KpiCell, { label: 'Mit Verursacher', value: num(kpi.mit_verursacher), sub: `${kpi.firmen_anzahl||0} Firmen` }),
+    h(KpiCell, { label: 'Mit Bauteil', value: num(kpi.mit_bauteil) }),
+    h(KpiCell, { label: 'Σ Tage Verzug', value: num(kpi.summe_tage), accent: true }),
+    h(KpiCell, { label: 'Σ Schaden (EUR)', value: eur(kpi.summe_eur), accent: true }),
+    h(KpiCell, { label: 'Soll-Bauzeit', value: '29 Mon', sub: 'Konzept v0.4' }),
+  )
+}
+
+// ---- Pipeline-Status-Card (Live-Anzeige zweier Pässe) -----------------
+
+function PipelineCard({ pipeline }) {
+  const p = pipeline
+  const pct = (zaehler, nenner) => nenner ? Math.round(zaehler / nenner * 100) : 0
+  const pass1 = pct(p.mit_beschreibung, p.mit_pdf)
+  const pass2 = pct(p.mit_verursacher, p.mit_beschreibung)
+  const Bar = ({ label, zaehler, nenner, percent, accent }) => h('div', { className: 'flex-1 min-w-[140px]' },
+    h('div', { className: 'flex items-baseline justify-between mb-1' },
+      h('span', { className: 'text-[10px] uppercase tracking-wider text-bp-muted' }, label),
+      h('span', { className: `text-xs font-mono ${accent ? 'text-bp-400' : 'text-white'}` },
+        `${zaehler} / ${nenner}`, h('span', { className: 'text-bp-muted ml-1' }, `(${percent}%)`)),
+    ),
+    h('div', { className: 'h-1.5 bg-white/10 rounded-full overflow-hidden' },
+      h('div', { className: 'h-full transition-all duration-500', style: { width: percent + '%', backgroundColor: accent ? '#f5a623' : '#10b981' } }),
+    ),
+  )
+  return h('div', { className: 'bg-bp-card rounded-lg p-3 border-l-2 border-bp-400' },
+    h('div', { className: 'flex items-center justify-between mb-2 flex-wrap gap-2' },
+      h('div', { className: 'flex items-center gap-2' },
+        h('span', { className: 'text-xs font-semibold text-white' }, 'Datenanreicherungs-Pipeline'),
+        p.extraktor_v2_aktiv
+          ? h('span', { className: 'inline-flex items-center gap-1 text-[10px] text-green-400' },
+              h('span', { className: 'w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse' }),
+              'läuft')
+          : h('span', { className: 'text-[10px] text-bp-muted' }, '· kein aktiver Lauf'),
+      ),
+      h('span', { className: 'text-[10px] text-bp-muted' },
+        p.letzte_aenderung ? `letzter DB-Schreibvorgang: ${new Date(p.letzte_aenderung).toLocaleTimeString('de-DE')}` : ''),
+    ),
+    h('div', { className: 'flex flex-wrap gap-4 mb-2' },
+      h(Bar, { label: 'Pass 1 · PDF → Beschreibung', zaehler: p.mit_beschreibung, nenner: p.mit_pdf, percent: pass1 }),
+      h(Bar, { label: 'Pass 2 · Beschreibung → Verursacher', zaehler: p.mit_verursacher, nenner: p.mit_beschreibung, percent: pass2, accent: true }),
+      h(Bar, { label: 'Bauteil (LLM + Plan)', zaehler: p.mit_bauteil, nenner: p.mit_beschreibung, percent: pct(p.mit_bauteil, p.mit_beschreibung) }),
+      h(Bar, { label: 'B-002-Verknüpfungen', zaehler: p.mit_verknuepfung, nenner: p.gesamt, percent: pct(p.mit_verknuepfung, p.gesamt) }),
+    ),
+    p.log_tail && p.log_tail.length > 0 && h('details', { className: 'mt-2' },
+      h('summary', { className: 'text-[10px] text-bp-muted cursor-pointer hover:text-bp-400' },
+        'Live-Log (letzte 12 Zeilen)'),
+      h('pre', {
+        className: 'mt-2 text-[10px] text-bp-muted bg-black/30 rounded p-2 overflow-x-auto leading-tight font-mono',
+        style: { maxHeight: '180px' },
+      }, p.log_tail.join('\n')),
+    ),
+  )
+}
+
+function KpiCell({ label, value, sub, accent }) {
+  return h('div', { className: 'bg-bp-card rounded-lg p-3' },
+    h('div', { className: 'text-[10px] text-bp-muted uppercase tracking-wider' }, label),
+    h('div', { className: `text-lg font-semibold mt-1 ${accent ? 'text-bp-400' : 'text-white'}` }, value),
+    sub && h('div', { className: 'text-[10px] text-bp-muted mt-1 leading-tight' }, sub),
+  )
+}
+
+// ---- Filter-Header -----------------------------------------------------
+
+function FilterHeader({ firmen, bauteile, fTyp, fVerursacher, fBauteil, fBestaetigt,
+                       toggleTyp, toggleVerursacher, toggleBauteil, setBestaetigt, reset }) {
+  const pill = (active, label, onClick, color) => h('button', {
+    onClick,
+    className: `px-2 py-1 rounded-full text-[11px] border transition ${
+      active
+        ? 'bg-bp-400 text-bp-dark border-bp-400 font-medium'
+        : 'bg-transparent text-bp-muted border-white/10 hover:border-bp-400 hover:text-white'
+    }`,
+    style: active && color ? { backgroundColor: color, borderColor: color, color: '#1a1a1a' } : null,
+  }, label)
+
+  return h('div', { className: 'bg-bp-card rounded-lg p-3 space-y-2 text-xs' },
+    h('div', { className: 'flex items-center gap-3 flex-wrap' },
+      h('span', { className: 'text-[10px] text-bp-muted uppercase tracking-wider w-20' }, 'Typ'),
+      Object.entries(TYP_LABEL).map(([t, label]) =>
+        pill(fTyp.includes(t), label, () => toggleTyp(t), TYP_FARBE[t])),
+    ),
+    h('div', { className: 'flex items-center gap-1 flex-wrap' },
+      h('span', { className: 'text-[10px] text-bp-muted uppercase tracking-wider w-20' }, 'Verursacher'),
+      firmen.map(f => pill(fVerursacher.includes(f.id), f.name.length > 18 ? f.name.slice(0,16)+'…' : f.name,
+        () => toggleVerursacher(f.id))),
+    ),
+    h('div', { className: 'flex items-center gap-1 flex-wrap' },
+      h('span', { className: 'text-[10px] text-bp-muted uppercase tracking-wider w-20' }, 'Bauteil'),
+      bauteile.map(b => pill(fBauteil.includes(b.kennung), b.kennung, () => toggleBauteil(b.kennung))),
+    ),
+    h('div', { className: 'flex items-center justify-between' },
+      h('label', { className: 'flex items-center gap-2 text-bp-muted cursor-pointer' },
+        h('input', { type: 'checkbox', checked: fBestaetigt, onChange: e => setBestaetigt(e.target.checked) }),
+        'nur menschlich bestätigte (B-002-Gate)'),
+      h('button', { className: 'text-[10px] text-bp-muted hover:text-bp-400', onClick: reset }, 'Filter zurücksetzen'),
+    ),
+  )
+}
+
+// ---- Plotly-Wrapper ----------------------------------------------------
+// Generischer Hook: nimmt einen Builder, der {data, layout} zurueckgibt,
+// und rendert in einen ref'd DIV. Re-rendert bei Daten-Aenderung.
+
+function usePlotly(builder, deps, onPointClick) {
+  const ref = useRef(null)
+  const clickRef = useRef(onPointClick)
+  clickRef.current = onPointClick
+  useEffect(() => {
+    if (!ref.current || !window.Plotly) return
+    const { data, layout, config } = builder()
+    const defaultLayout = {
+      paper_bgcolor: 'rgba(0,0,0,0)',
+      plot_bgcolor:  'rgba(0,0,0,0)',
+      font: { color: '#e5e5e5', family: 'DM Sans, sans-serif', size: 11 },
+      margin: { l: 60, r: 20, t: 20, b: 50 },
+      ...layout,
+    }
+    const defaultConfig = { displayModeBar: false, responsive: true, ...config }
+    window.Plotly.newPlot(ref.current, data, defaultLayout, defaultConfig).then(() => {
+      if (ref.current && clickRef.current) {
+        ref.current.on('plotly_click', (e) => {
+          const pt = e?.points?.[0]
+          if (pt && clickRef.current) clickRef.current(pt)
+        })
+      }
+    })
+    return () => { if (ref.current && window.Plotly) window.Plotly.purge(ref.current) }
+  }, deps)
+  return ref
+}
+
+// ---- GANTT mit Soll-Balken und Vorgangs-Markern ------------------------
+
+function GanttChart({ vorgaenge, plan, yAchse, onSelect }) {
+  const ref = usePlotly(() => {
+    const phasen = (plan?.phasen) || []
+    const traces = []
+    // Wähler für die Y-Werte je nach Achse. '— (unbekannt)' als eigene Y-Kategorie,
+    // damit kein Vorgang aus der Sicht verschwindet.
+    const yOf = (v) => {
+      if (yAchse === 'typ')         return TYP_LABEL[v.typ] || v.typ
+      if (yAchse === 'verursacher') return v.verursacher_name || '— (unbekannt)'
+      return v.bauteil_kennung || '— (unbekannt)'
+    }
+    // Y-Kategorien sammeln (für Reihenfolge).
+    const yCats = (() => {
+      if (yAchse === 'typ') return ['BehA', 'BED', 'MA', 'NT']
+      if (yAchse === 'verursacher') {
+        const s = [...new Set(vorgaenge.filter(v => v.verursacher_name).map(v => v.verursacher_name))]
+        s.sort()
+        s.push('— (unbekannt)')
+        return s
+      }
+      // bauteil: aus Plan-Phasen + (unbekannt) wenn welche ohne Bauteil
+      const cats = [...new Set(phasen.map(p => p.bauteil_kennung))]
+      if (vorgaenge.some(v => !v.bauteil_kennung)) cats.push('— (unbekannt)')
+      return cats
+    })()
+    // Soll-Phasen nur bei bauteil-Achse
+    if (yAchse === 'bauteil') {
+      phasen.forEach((ph, i) => {
+        traces.push({
+          type: 'bar',
+          orientation: 'h',
+          x: [new Date(ph.soll_ende).getTime() - new Date(ph.soll_start).getTime()],
+          y: [ph.bauteil_kennung],
+          base: ph.soll_start,
+          name: 'Soll-Phase',
+          marker: { color: 'rgba(245,166,35,0.18)', line: { color: 'rgba(245,166,35,0.6)', width: 1 } },
+          hovertemplate: `${ph.bauteil_kennung} · ${ph.phase}<br>${ph.soll_start} → ${ph.soll_ende}<extra></extra>`,
+          showlegend: i === 0,
+          legendgroup: 'soll',
+        })
+      })
+    }
+    // Meilensteine als vertikale Linien (Annotations)
+    const meilensteinShapes = (plan?.meilensteine || []).map(m => ({
+      type: 'line',
+      xref: 'x', yref: 'paper',
+      x0: m.soll_datum, x1: m.soll_datum, y0: 0, y1: 1,
+      line: { color: 'rgba(245,166,35,0.4)', width: 1, dash: 'dot' },
+    }))
+    // Stagger gegen Überlappung: jedes Label um eine Zeile höher.
+    const meilensteinAnnots = (plan?.meilensteine || []).map((m, i) => ({
+      x: m.soll_datum, y: 1, yref: 'paper', xref: 'x',
+      text: m.name, showarrow: false, font: { size: 9, color: '#f5a623' },
+      yshift: 6 + (i % 4) * 11, xanchor: 'left', textangle: -15,
+    }))
+    // Vorgangs-Marker — KEIN Vorgang wird ausgeblendet. Ohne Datum -> Erstellungs-Datum,
+    // ohne Bauteil/Verursacher -> '(unbekannt)' als Y-Kategorie. Memory (Martin 2026-05-20):
+    // jedes Dokument zaehlt nachweistechnisch, auch wenn der LLM keinen Verursacher fand.
+    const typen = [...new Set(vorgaenge.map(v => v.typ))]
+    typen.forEach(typ => {
+      const punkte = vorgaenge.filter(v => v.typ === typ)
+      if (!punkte.length) return
+      traces.push({
+        type: 'scatter',
+        mode: 'markers',
+        // Vorfalls-Datum fehlt fast nie (Backend hat Fallback auf erstellt_am), aber sicher ist sicher.
+        x: punkte.map(v => v.vorfalls_datum || v.erstellt_am),
+        y: punkte.map(v => yOf(v)),
+        name: TYP_LABEL[typ] || typ,
+        marker: {
+          size: punkte.map(v => Math.max(8, Math.min(28, (v.z_tage || 6) * 1.2))),
+          color: TYP_FARBE[typ] || '#999',
+          line: { color: '#1a1a1a', width: 1 },
+          symbol: typ === 'mangelanzeige' ? 'x' : typ === 'nachtrag' ? 'square' : 'circle',
+        },
+        customdata: punkte.map(v => v.id),
+        text: punkte.map(v => `${v.nummer}<br>Verursacher: ${v.verursacher_name || '—'}<br>Z: ${v.z_tage || '?'} AT · K: ${v.k_eur ? Number(v.k_eur).toLocaleString('de-DE')+' €' : '—'}<br>${(v.gegenstand || '').slice(0,80)}<br><i>(Klick für Details)</i>`),
+        hovertemplate: '%{text}<extra></extra>',
+      })
+    })
+    return {
+      data: traces,
+      layout: {
+        height: 520,
+        barmode: 'overlay',
+        xaxis: { type: 'date', gridcolor: '#333', title: 'Zeit' },
+        yaxis: {
+          categoryorder: 'array',
+          categoryarray: yCats.slice().reverse(),
+          gridcolor: '#222',
+          automargin: true,
+        },
+        legend: { orientation: 'h', y: -0.15 },
+        shapes: yAchse === 'bauteil' ? meilensteinShapes : [],
+        annotations: yAchse === 'bauteil' ? meilensteinAnnots : [],
+        margin: { l: 140, r: 20, t: 40, b: 60 },
+      },
+    }
+  }, [vorgaenge, plan, yAchse], (pt) => { if (pt?.customdata && onSelect) onSelect(pt.customdata) })
+  return h('div', { ref, style: { width: '100%', height: 480 } })
+}
+
+// ---- SANKEY Verursacher → Vorgangstyp → Bauteil ------------------------
+
+function SankeyChart({ vorgaenge }) {
+  const ref = usePlotly(() => {
+    // KEIN Vorgang wird ausgeblendet. Verursacher/Bauteil ohne LLM-Treffer
+    // bekommen einen eigenen Knoten '— (unbekannt)' — damit nachweistechnisch
+    // jedes Dokument sichtbar bleibt (G2 Revisionssicherheit).
+    const UNK = '— (unbekannt)'
+    const verursacherSet = [...new Set(vorgaenge.map(v => v.verursacher_name || UNK))]
+    const typenSet = [...new Set(vorgaenge.map(v => v.typ))]
+    const bauteilSet = [...new Set(vorgaenge.map(v => v.bauteil_kennung || UNK))]
+    // Doppelten UNK-Knoten verhindern: pro Spalte einmal mit Suffix
+    const vNode = (n) => n === UNK ? `${UNK} (Verursacher)` : n
+    const bNode = (n) => n === UNK ? `${UNK} (Bauteil)` : n
+    const nodes = [
+      ...verursacherSet.map(vNode),
+      ...typenSet.map(t => TYP_LABEL[t] || t),
+      ...bauteilSet.map(bNode),
+    ]
+    const idx = (n) => nodes.indexOf(n)
+    const links = []
+    // Kanten 1: Verursacher → Typ (ALLE Vorgänge zählen)
+    const stufe1 = {}
+    vorgaenge.forEach(v => {
+      const a = vNode(v.verursacher_name || UNK)
+      const b = TYP_LABEL[v.typ] || v.typ
+      const key = `${a}|${b}`
+      stufe1[key] = (stufe1[key] || 0) + 1
+    })
+    Object.entries(stufe1).forEach(([k, n]) => {
+      const [a, b] = k.split('|')
+      links.push({ source: idx(a), target: idx(b), value: n })
+    })
+    // Kanten 2: Typ → Bauteil (ALLE Vorgänge zählen)
+    const stufe2 = {}
+    vorgaenge.forEach(v => {
+      const a = TYP_LABEL[v.typ] || v.typ
+      const b = bNode(v.bauteil_kennung || UNK)
+      const key = `${a}|${b}`
+      stufe2[key] = (stufe2[key] || 0) + 1
+    })
+    Object.entries(stufe2).forEach(([k, n]) => {
+      const [a, b] = k.split('|')
+      links.push({ source: idx(a), target: idx(b), value: n })
+    })
+    const nodeColors = nodes.map(n => {
+      if (n.startsWith('— (unbekannt)')) return '#4a4a4a'   // grau fuer unbekannt
+      if (Object.values(TYP_LABEL).includes(n)) {
+        const t = Object.entries(TYP_LABEL).find(([k,v]) => v === n)?.[0]
+        return TYP_FARBE[t] || '#999'
+      }
+      // Heuristik: Bauteil-Kennungen sind kurz und beginnen mit GEB oder AUSS
+      if (n.startsWith('GEB') || n === 'AUSS') return '#f5a623'
+      return '#6b7280'   // Verursacher (Firmenname)
+    })
+    return {
+      data: [{
+        type: 'sankey',
+        node: { label: nodes, pad: 12, thickness: 14, line: { width: 0 }, color: nodeColors },
+        link: { source: links.map(l => l.source), target: links.map(l => l.target), value: links.map(l => l.value), color: 'rgba(245,166,35,0.15)' },
+      }],
+      layout: { height: 480 },
+    }
+  }, [vorgaenge])
+  return h('div', { ref, style: { width: '100%', height: 480 } })
+}
+
+// ---- WASSERFALL Q/Z/K --------------------------------------------------
+
+function WasserfallChart({ vorgaenge, onSelect }) {
+  const ref = usePlotly(() => {
+    // Sortiert nach z_tage absteigend, nur Vorgaenge mit Z>0 oder K>0
+    const sorted = vorgaenge
+      .filter(v => (v.z_tage || 0) > 0 || (v.k_eur || 0) > 0)
+      .sort((a, b) => (b.z_tage || 0) - (a.z_tage || 0))
+      .slice(0, 25)
+    if (!sorted.length) {
+      return { data: [{ type: 'bar', x: [], y: [] }], layout: { height: 460, annotations: [{ text: 'Noch keine Z/K-Daten — der LLM-Extraktor füllt diese erst, wenn der Nachtlauf läuft.', showarrow: false, font: { color: '#888' }, xref: 'paper', yref: 'paper', x: 0.5, y: 0.5 }] } }
+    }
+    return {
+      data: [
+        {
+          type: 'bar',
+          name: 'Tage Verzug',
+          x: sorted.map(v => v.nummer),
+          y: sorted.map(v => v.z_tage || 0),
+          marker: { color: sorted.map(v => TYP_FARBE[v.typ] || '#999') },
+          text: sorted.map(v => v.verursacher_name || '—'),
+          customdata: sorted.map(v => v.id),
+          hovertemplate: '%{x}<br>%{y} AT Verzug<br>Verursacher: %{text}<br><i>(Klick für Details)</i><extra></extra>',
+          yaxis: 'y',
+        },
+        {
+          type: 'bar',
+          name: 'Kosten (k€)',
+          x: sorted.map(v => v.nummer),
+          y: sorted.map(v => (v.k_eur || 0) / 1000),
+          marker: { color: '#ffffff66' },
+          customdata: sorted.map(v => v.id),
+          hovertemplate: '%{x}<br>%{y:.1f} k€<br><i>(Klick für Details)</i><extra></extra>',
+          yaxis: 'y2',
+        },
+      ],
+      layout: {
+        height: 460,
+        barmode: 'group',
+        xaxis: { tickangle: -45, gridcolor: '#222' },
+        yaxis:  { title: 'Tage Verzug', gridcolor: '#333' },
+        yaxis2: { title: 'Kosten (k€)', overlaying: 'y', side: 'right', gridcolor: 'transparent' },
+        legend: { orientation: 'h', y: 1.1 },
+        margin: { l: 60, r: 60, t: 30, b: 100 },
+      },
+    }
+  }, [vorgaenge], (pt) => { if (pt?.customdata && onSelect) onSelect(pt.customdata) })
+  return h('div', { ref, style: { width: '100%', height: 460 } })
+}
+
+// ---- DETAIL-MODAL (Klick auf Vorgangs-Punkt) ---------------------------
+
+function VorgangModal({ vorgang, onClose }) {
+  // ESC schliesst das Modal — Hook MUSS vor jedem conditional return stehen
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  // Auto-Kontext fuer den Chatbot: solange dieses Modal offen ist, weiss
+  // der Bot, dass der Anwender gerade diesen Vorgang anschaut.
+  useEffect(() => {
+    if (!vorgang) return
+    const lines = [`Aktuell offen: ${vorgang.nummer} (${vorgang.typ})`]
+    if (vorgang.gegenstand) lines.push(`Gegenstand: ${vorgang.gegenstand}`)
+    if (vorgang.verursacher_name) lines.push(`Verursacher: ${vorgang.verursacher_name}`)
+    if (vorgang.bauteil_kennung) lines.push(`Bauteil: ${vorgang.bauteil_kennung}`)
+    window.__bp_chat_kontext = lines.join(' | ')
+    return () => { window.__bp_chat_kontext = null }
+  }, [vorgang])
+
+  if (!vorgang) return null
+
+  const eur = (n) => (n === null || n === undefined) ? '—' : Number(n).toLocaleString('de-DE', { maximumFractionDigits: 2 }) + ' €'
+  const date = (d) => d ? new Date(d).toLocaleDateString('de-DE') : '—'
+
+  const Row = ({ label, value, accent }) => h('div', { className: 'flex justify-between gap-4 py-1 border-b border-white/5' },
+    h('span', { className: 'text-[11px] text-bp-muted uppercase tracking-wider' }, label),
+    h('span', { className: `text-xs text-right ${accent ? 'text-bp-400 font-medium' : 'text-white'}` }, value),
+  )
+
+  return h('div', {
+    className: 'fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4',
+    onClick: onClose,
+  },
+    h('div', {
+      className: 'bg-bp-card border border-white/10 rounded-lg max-w-2xl w-full max-h-[85vh] overflow-y-auto shadow-2xl',
+      onClick: (e) => e.stopPropagation(),
+    },
+      // Header
+      h('div', { className: 'flex items-start justify-between p-4 border-b border-white/10' },
+        h('div', null,
+          h('div', { className: 'flex items-center gap-2' },
+            h('span', {
+              className: 'inline-block px-2 py-0.5 rounded text-[10px] uppercase tracking-wider font-medium',
+              style: { backgroundColor: TYP_FARBE[vorgang.typ] || '#666', color: '#1a1a1a' },
+            }, TYP_LABEL[vorgang.typ] || vorgang.typ),
+            h('h3', { className: 'text-lg font-semibold text-white' }, vorgang.nummer),
+          ),
+          h('p', { className: 'text-sm text-white mt-1' }, vorgang.gegenstand || '—'),
+        ),
+        h('button', {
+          className: 'text-bp-muted hover:text-white text-2xl leading-none px-2',
+          onClick: onClose,
+          'aria-label': 'Schließen',
+        }, '×'),
+      ),
+      // Beschreibung
+      vorgang.beschreibung && h('div', { className: 'p-4 border-b border-white/10' },
+        h('div', { className: 'text-[10px] text-bp-muted uppercase tracking-wider mb-2' }, 'Beschreibung (KI-extrahiert)'),
+        h('p', { className: 'text-xs text-white leading-relaxed' }, vorgang.beschreibung),
+      ),
+      // Felder-Grid
+      h('div', { className: 'p-4 space-y-0' },
+        h('div', { className: 'text-[10px] text-bp-muted uppercase tracking-wider mb-2' }, 'Zuordnung'),
+        h(Row, { label: 'Verursacher', value: vorgang.verursacher_name || '—', accent: !!vorgang.verursacher_name }),
+        vorgang.verursacher_rolle && h(Row, { label: 'Rolle', value: vorgang.verursacher_rolle }),
+        h(Row, { label: 'Bauteil', value: vorgang.bauteil_name || vorgang.bauteil_kennung || '—' }),
+        h(Row, { label: 'Vorfalls-Datum', value: date(vorgang.vorfalls_datum) }),
+        h(Row, { label: 'Status', value: vorgang.status || '—' }),
+      ),
+      h('div', { className: 'p-4 space-y-0 border-t border-white/5' },
+        h('div', { className: 'text-[10px] text-bp-muted uppercase tracking-wider mb-2' }, 'Dreiklang Q/Z/K'),
+        h(Row, { label: 'Z · Tage Verzug', value: vorgang.z_tage ? `${vorgang.z_tage} AT` : '—', accent: !!vorgang.z_tage }),
+        h(Row, { label: 'K · Schaden', value: eur(vorgang.k_eur), accent: !!vorgang.k_eur }),
+        vorgang.betrag_gefordert && h(Row, { label: '  davon gefordert', value: eur(vorgang.betrag_gefordert) }),
+        vorgang.betrag_geprueft && h(Row, { label: '  davon geprüft',  value: eur(vorgang.betrag_geprueft) }),
+        vorgang.betrag_genehmigt && h(Row, { label: '  davon genehmigt', value: eur(vorgang.betrag_genehmigt) }),
+        (vorgang.qualitaet_bewertung || vorgang.qualitaetsauswirkung) &&
+          h(Row, { label: 'Q · Qualität', value: vorgang.qualitaet_bewertung || vorgang.qualitaetsauswirkung }),
+      ),
+      // Konfidenz / B-002-Gate
+      h('div', { className: 'p-4 border-t border-white/5' },
+        h('div', { className: 'text-[10px] text-bp-muted uppercase tracking-wider mb-2' }, 'KI-Konfidenz (B-002)'),
+        h(Row, {
+          label: 'Konfidenz',
+          value: vorgang.konfidenz ? `${(vorgang.konfidenz * 100).toFixed(0)} %` : '—',
+        }),
+        h(Row, {
+          label: 'Menschlich bestätigt',
+          value: vorgang.konfidenz_bestaetigt ? '✓ ja' : '✗ nein',
+        }),
+      ),
+      // Dokumente — Klick öffnet PDF in neuem Tab via bpDownload
+      Array.isArray(vorgang.dokumente) && vorgang.dokumente.length > 0 && h('div', { className: 'p-4 border-t border-white/5' },
+        h('div', { className: 'text-[10px] text-bp-muted uppercase tracking-wider mb-2' },
+          `Dokumente (${vorgang.dokumente.length})`),
+        h('div', { className: 'space-y-1' },
+          vorgang.dokumente.map(dok => h('button', {
+            key: dok.id,
+            className: 'w-full flex items-center justify-between gap-3 p-2 rounded bg-white/5 hover:bg-bp-400/15 hover:border-bp-400 border border-transparent transition text-left group',
+            onClick: async () => {
+              try {
+                const tok = sessionStorage.getItem('bp_token')
+                const blob = await bpDownload(`/dokumente/${dok.id}/download`, { token: tok })
+                // Backend liefert application/octet-stream — Browser erkennt PDF nicht.
+                // Blob explizit als PDF re-typen.
+                const pdfBlob = new Blob([blob], { type: 'application/pdf' })
+                const url = URL.createObjectURL(pdfBlob)
+                // <a target=_blank> mit Filename: Browser öffnet inline im PDF-Viewer
+                // mit sinnvollem Tab-Titel statt kryptischem Blob-URL.
+                const a = document.createElement('a')
+                a.href = url
+                a.target = '_blank'
+                a.rel = 'noopener'
+                // download-Attribute nicht setzen — sonst wird's gezwungen heruntergeladen
+                // statt inline angezeigt
+                document.body.appendChild(a)
+                a.click()
+                a.remove()
+                setTimeout(() => URL.revokeObjectURL(url), 60000)
+              } catch (e) {
+                alert('Download fehlgeschlagen: ' + (e.detail || e.message || e))
+              }
+            },
+          },
+            h('span', { className: 'text-base text-bp-muted group-hover:text-bp-400' }, '📄'),
+            h('div', { className: 'flex-1 min-w-0' },
+              h('div', { className: 'text-xs text-white truncate' }, dok.dateiname),
+              h('div', { className: 'text-[10px] text-bp-muted' },
+                dok.groesse ? `${(dok.groesse / 1024 / 1024).toFixed(2)} MB` : ''),
+            ),
+            h('span', { className: 'text-[10px] text-bp-muted group-hover:text-bp-400 shrink-0' }, 'PDF öffnen →'),
+          )),
+        ),
+      ),
+      // Footer
+      h('div', { className: 'p-4 border-t border-white/10 flex justify-between items-center text-[10px] text-bp-muted' },
+        h('span', null, `ID: ${vorgang.id?.slice(0, 8)}…`),
+        h('span', null, 'ESC oder Klick außerhalb schließt'),
+      ),
+    ),
+  )
+}
+
+// ---- HEATMAP Verursacher × Bauteil ------------------------------------
+
+function HeatmapChart({ vorgaenge }) {
+  const ref = usePlotly(() => {
+    // KEIN Vorgang wird ausgeblendet. Achsen-Kategorien enthalten '(unbekannt)'.
+    const UNK = '— (unbekannt)'
+    const verursacherSet = [...new Set(vorgaenge.map(v => v.verursacher_name || UNK))].sort((a,b) => a === UNK ? 1 : b === UNK ? -1 : a.localeCompare(b))
+    const bauteilSet = [...new Set(vorgaenge.map(v => v.bauteil_kennung || UNK))].sort((a,b) => a === UNK ? 1 : b === UNK ? -1 : a.localeCompare(b))
+    if (!verursacherSet.length || !bauteilSet.length) {
+      return { data: [{ type: 'heatmap', z: [[0]] }], layout: { height: 460, annotations: [{ text: 'Keine Vorgaenge im Filter.', showarrow: false, font: { color: '#888' }, xref: 'paper', yref: 'paper', x: 0.5, y: 0.5 }] } }
+    }
+    // z[i][j] = Anzahl Vorgaenge fuer Verursacher i / Bauteil j (UNK-Spalte/Zeile inklusive)
+    const z = verursacherSet.map(v =>
+      bauteilSet.map(b =>
+        vorgaenge.filter(x => (x.verursacher_name || UNK) === v && (x.bauteil_kennung || UNK) === b).length
+      )
+    )
+    // Hover-Text: Top-3-Vorgaenge je Zelle
+    const tt = verursacherSet.map(v =>
+      bauteilSet.map(b => {
+        const ms = vorgaenge.filter(x => (x.verursacher_name || UNK) === v && (x.bauteil_kennung || UNK) === b)
+        if (!ms.length) return 'keine'
+        return ms.slice(0, 3).map(m => `${m.nummer}: ${(m.gegenstand||'').slice(0,40)}`).join('<br>') + (ms.length > 3 ? `<br>… +${ms.length-3} weitere` : '')
+      })
+    )
+    return {
+      data: [{
+        type: 'heatmap',
+        z, x: bauteilSet, y: verursacherSet,
+        text: tt,
+        hovertemplate: '%{y} · %{x}<br>%{z} Vorgänge<br>%{text}<extra></extra>',
+        colorscale: [[0, '#1a1a1a'], [0.001, '#3a2a10'], [0.5, '#c47508'], [1, '#f5a623']],
+        showscale: true,
+      }],
+      layout: {
+        height: 460,
+        xaxis: { title: 'Bauteil', gridcolor: '#222' },
+        yaxis: { title: 'Verursacher', gridcolor: '#222', automargin: true },
+        margin: { l: 180, r: 30, t: 20, b: 60 },
+      },
+    }
+  }, [vorgaenge])
+  return h('div', { ref, style: { width: '100%', height: 460 } })
+}
+
+// ---- Pfad-Bereich (linear: Vorgänger ← Selected → Nachfolger) ----
+// Wird unter dem Hauptdiagramm angezeigt, wenn ein Knoten ausgewaehlt ist.
+function PfadBereich({ knoten, vorgaenger, nachfolger, onNavigate }) {
+  const MAX_NACHBARN = 6   // pro Seite, sonst "+N weitere"
+  const date = (d) => d ? new Date(d).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—'
+
+  const vorgGezeigt = vorgaenger.slice(0, MAX_NACHBARN)
+  const vorgRest = Math.max(0, vorgaenger.length - MAX_NACHBARN)
+  const nachfGezeigt = nachfolger.slice(0, MAX_NACHBARN)
+  const nachfRest = Math.max(0, nachfolger.length - MAX_NACHBARN)
+
+  const Box = ({ k, typ, klickbar, klein }) => {
+    const fill = k.kritisch ? '#3a1212' : k.ebene === 0 ? '#3a2a10' : k.ebene === 1 ? '#232323' : '#1f1f1f'
+    const stroke = k.kritisch ? '#ef4444' : k.ebene === 0 ? '#f5a623' : '#5a3a10'
+    const isSel = typ === 'selected'
+    return h('button', {
+      onClick: klickbar ? () => onNavigate(k.id) : undefined,
+      disabled: !klickbar,
+      className: `rounded border-2 px-3 py-2 text-left transition ${klickbar ? 'hover:border-bp-400 cursor-pointer' : 'cursor-default'} ${isSel ? 'ring-2 ring-bp-400 ring-offset-1 ring-offset-bp-dark' : ''}`,
+      style: {
+        backgroundColor: fill, borderColor: isSel ? '#f5a623' : stroke,
+        minWidth: klein ? '130px' : '170px', maxWidth: klein ? '160px' : '210px',
+      },
+    },
+      h('div', { className: 'flex items-baseline justify-between gap-2 mb-1' },
+        h('span', { className: 'text-[9px] font-mono text-bp-muted' }, `#${k.id}`),
+        h('span', {
+          className: `text-[9px] uppercase font-medium px-1 rounded ${k.kritisch ? 'bg-red-500/30 text-red-300' : 'text-bp-muted'}`,
+        }, k.kritisch ? 'krit' : `L${k.ebene}`),
+      ),
+      h('div', { className: 'text-xs text-white leading-tight font-medium mb-1 line-clamp-2' },
+        (k.label || '').slice(0, klein ? 60 : 100)),
+      h('div', { className: 'text-[9px] text-bp-muted' },
+        `${date(k.anfang)} → ${date(k.ende)} · ${k.dauer_tage}T`),
+      k.gebaeude && h('div', { className: 'text-[9px] text-bp-muted/70 mt-0.5 font-mono' }, k.gebaeude),
+    )
+  }
+
+  const Pfeil = ({ farbe }) => h('div', {
+    className: 'flex items-center text-2xl select-none',
+    style: { color: farbe || '#f5a623' },
+  }, '→')
+
+  return h('div', { className: 'bg-bp-card rounded-lg p-3 overflow-x-auto' },
+    h('div', { className: 'flex items-center gap-2 mb-2 text-[10px] uppercase tracking-wider text-bp-muted' },
+      'Pfad-Linie',
+      h('span', { className: 'text-bp-muted/60 normal-case' },
+        `· ${vorgaenger.length} Vorgänger / ${nachfolger.length} Nachfolger`),
+    ),
+    h('div', { className: 'flex items-stretch gap-2', style: { minHeight: '140px' } },
+      // Spalte 1: Vorgänger (vertikal gestapelt)
+      h('div', { className: 'flex flex-col gap-1 justify-center' },
+        vorgaenger.length === 0
+          ? h('div', { className: 'text-[10px] text-bp-muted italic px-3 py-2' }, '(keine Vorgänger)')
+          : [
+              ...vorgGezeigt.map(v => h('div', { key: v.id, className: 'flex items-center gap-1' },
+                h(Box, { k: v.knoten, klickbar: true, klein: true }),
+                h('span', { className: 'text-[9px] text-bp-muted px-1 font-mono' }, v.typ || 'EA'),
+              )),
+              vorgRest > 0 && h('div', {
+                className: 'text-[10px] text-bp-muted italic text-center py-1',
+                key: 'rest-vorg',
+              }, `+${vorgRest} weitere Vorgänger`),
+            ],
+      ),
+      // Pfeil
+      h(Pfeil, null),
+      // Spalte 2: Selected (mittig, hervorgehoben)
+      h('div', { className: 'flex items-center' },
+        h(Box, { k: knoten, typ: 'selected', klickbar: false }),
+      ),
+      // Pfeil
+      h(Pfeil, null),
+      // Spalte 3: Nachfolger
+      h('div', { className: 'flex flex-col gap-1 justify-center' },
+        nachfolger.length === 0
+          ? h('div', { className: 'text-[10px] text-bp-muted italic px-3 py-2' }, '(keine Nachfolger)')
+          : [
+              ...nachfGezeigt.map(s => h('div', { key: s.id, className: 'flex items-center gap-1' },
+                h('span', { className: 'text-[9px] text-bp-muted px-1 font-mono' }, s.typ || 'EA'),
+                h(Box, { k: s.knoten, klickbar: true, klein: true }),
+              )),
+              nachfRest > 0 && h('div', {
+                className: 'text-[10px] text-bp-muted italic text-center py-1',
+                key: 'rest-nachf',
+              }, `+${nachfRest} weitere Nachfolger`),
+            ],
+      ),
+    ),
+  )
+}
+
+// ---- Helper: Bauteil-Kennung (BauPilot: GEB30..AUSS) → Plan-Gebäude-Gruppen (xlsx: J30..AUSS) ----
+function bauteilKennungZuPlanGruppen(kennung) {
+  if (!kennung) return []
+  if (kennung === 'GEB30') return ['J30']
+  if (kennung === 'GEB31') return ['J31']
+  if (kennung === 'GEB32') return ['J32']
+  if (kennung === 'GEB33') return ['J33']
+  if (kennung === 'GEB34') return ['J34_1', 'J34_2', 'J34_3', 'J34']
+  if (kennung === 'AUSS')  return ['AUSS', 'J00', 'Aussenanlagen']
+  return [kennung]
+}
+
+// ---- Render-Funktion ZEITLEISTE ----
+// X-Achse = echte Zeit, Y-Achse = Bauteil-Gruppen (xlsx-Gebäude)
+function renderZeitleiste(svgEl, data, opts) {
+  const { bpVorgangCache, vollDetail, showKritisch,
+          filterEbenen, filterGebaeude, filterSuche, nurMitBauPilot,
+          onSelectKnoten, onSelectAnzeige } = opts
+  const d3 = window.d3
+
+  // Filter
+  let knoten = data.knoten.filter(k => k.anfang && k.ende)
+  if (!vollDetail) knoten = knoten.filter(k => k.ebene <= 1)
+  if (showKritisch) knoten = knoten.filter(k => k.kritisch || k.ebene === 0)
+  if (filterEbenen && filterEbenen.size > 0)
+    knoten = knoten.filter(k => filterEbenen.has(k.ebene))
+  if (filterGebaeude && filterGebaeude.size > 0)
+    knoten = knoten.filter(k => k.gebaeude && filterGebaeude.has(k.gebaeude))
+  if (filterSuche && filterSuche.trim()) {
+    const s = filterSuche.toLowerCase().trim()
+    knoten = knoten.filter(k => (k.label || '').toLowerCase().includes(s) || String(k.id).includes(s))
+  }
+  const idSet = new Set(knoten.map(k => k.id))
+  const kanten = data.kanten.filter(e => idSet.has(e.from) && idSet.has(e.to))
+
+  // BauPilot-Anzeigen mit Vorfalls-Datum (= Marker auf Zeitachse)
+  const anzeigen = Object.values(bpVorgangCache || {}).filter(v => v.vorfalls_datum)
+
+  // Y-Gruppen: alle vorkommenden Gebaeude + zusätzlich '— ohne Bauteil-Bezug'
+  const gruppenRaw = [...new Set(knoten.map(k => k.gebaeude || '— ohne Bauteil').filter(Boolean))]
+  // Sortieren: GEB30..34 zuerst, dann andere J*, dann J00, dann Rest
+  const ordnung = (g) => {
+    if (/^J3[0-4]/.test(g)) return 0
+    if (g.startsWith('J')) return 1
+    if (g.startsWith('Beh') || g.startsWith('NT')) return 3
+    return 2
+  }
+  const gruppen = gruppenRaw.sort((a, b) => ordnung(a) - ordnung(b) || a.localeCompare(b))
+  if (anzeigen.length > 0 && !gruppen.includes('BauPilot-Anzeigen')) {
+    gruppen.unshift('BauPilot-Anzeigen')   // Marker-Zeile ganz oben
+  }
+
+  // SVG-Größe
+  const rect = svgEl.getBoundingClientRect()
+  const sw = rect.width || 1200
+  const sh = rect.height || 700
+  const marginL = 110, marginR = 30, marginT = 30, marginB = 50
+  const innerW = sw - marginL - marginR
+  const innerH = sh - marginT - marginB
+
+  // Zeitspanne aus allen relevanten Daten
+  const allDates = []
+  knoten.forEach(k => { allDates.push(new Date(k.anfang)); allDates.push(new Date(k.ende)) })
+  anzeigen.forEach(v => allDates.push(new Date(v.vorfalls_datum)))
+  const xMin = d3.min(allDates) || new Date('2020-01-01')
+  const xMax = d3.max(allDates) || new Date('2027-01-01')
+  // Etwas Polster
+  const padDays = (xMax - xMin) / (1000 * 60 * 60 * 24) * 0.03
+  const xDomain = [
+    new Date(xMin.getTime() - padDays * 86400000),
+    new Date(xMax.getTime() + padDays * 86400000),
+  ]
+  const x = d3.scaleTime().domain(xDomain).range([0, innerW])
+  const y = d3.scaleBand().domain(gruppen).range([0, innerH]).padding(0.18)
+
+  // SVG aufräumen
+  const svg = d3.select(svgEl)
+  svg.selectAll('*').remove()
+
+  const defs = svg.append('defs')
+  defs.append('marker').attr('id', 'arrow-tl').attr('viewBox', '0 -5 10 10').attr('refX', 8).attr('refY', 0)
+    .attr('markerWidth', 5).attr('markerHeight', 5).attr('orient', 'auto')
+    .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', '#f5a623')
+  defs.append('marker').attr('id', 'arrow-tl-krit').attr('viewBox', '0 -5 10 10').attr('refX', 8).attr('refY', 0)
+    .attr('markerWidth', 5).attr('markerHeight', 5).attr('orient', 'auto')
+    .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', '#ef4444')
+
+  const rootG = svg.append('g').attr('transform', `translate(${marginL},${marginT})`)
+  rootG.attr('class', 'root')
+
+  // ---- Achsen ----
+  // X (unten)
+  const xAxis = d3.axisBottom(x).ticks(Math.min(12, Math.round(innerW / 90))).tickFormat(d3.timeFormat('%b %Y'))
+  rootG.append('g').attr('transform', `translate(0,${innerH})`).call(xAxis)
+    .attr('color', '#9ca3af').attr('font-size', '10px')
+  // Y (links)
+  const yAxis = d3.axisLeft(y).tickSize(0)
+  const yG = rootG.append('g').call(yAxis)
+  yG.attr('color', '#9ca3af').attr('font-size', '10px')
+  yG.select('.domain').remove()
+  yG.selectAll('text').attr('dx', '-4').attr('font-weight', '500')
+
+  // Schwache horizontale Linien zwischen Y-Gruppen
+  gruppen.forEach(g => {
+    rootG.append('line')
+      .attr('x1', 0).attr('x2', innerW)
+      .attr('y1', y(g) + y.bandwidth() / 2).attr('y2', y(g) + y.bandwidth() / 2)
+      .attr('stroke', '#222').attr('stroke-width', 0.5)
+  })
+
+  // Heute-Linie
+  const heute = new Date()
+  if (heute >= xDomain[0] && heute <= xDomain[1]) {
+    rootG.append('line')
+      .attr('x1', x(heute)).attr('x2', x(heute))
+      .attr('y1', 0).attr('y2', innerH)
+      .attr('stroke', '#10b981').attr('stroke-width', 1).attr('opacity', 0.5)
+      .attr('stroke-dasharray', '4,3')
+    rootG.append('text').attr('x', x(heute) + 4).attr('y', 10)
+      .attr('fill', '#10b981').attr('font-size', '9px').text('heute')
+  }
+
+  // ---- Kanten zwischen Knoten ----
+  const knotenById = new Map(knoten.map(k => [k.id, k]))
+  const kantenG = rootG.append('g').attr('class', 'edges-tl')
+  kanten.forEach(e => {
+    const von = knotenById.get(e.from), zu = knotenById.get(e.to)
+    if (!von || !zu) return
+    const x0 = x(new Date(von.ende))
+    const x1 = x(new Date(zu.anfang))
+    const y0 = y(von.gebaeude || '— ohne Bauteil') + y.bandwidth() / 2
+    const y1 = y(zu.gebaeude || '— ohne Bauteil') + y.bandwidth() / 2
+    const isKrit = von.kritisch && zu.kritisch
+    // Bezier-Pfad mit horizontalen Tangenten
+    const dx = Math.abs(x1 - x0)
+    const ctrl = Math.min(40, dx * 0.4)
+    const d_ = `M${x0},${y0} C${x0 + ctrl},${y0} ${x1 - ctrl},${y1} ${x1},${y1}`
+    kantenG.append('path').attr('d', d_)
+      .attr('class', 'edge-tl')
+      .attr('data-from', e.from).attr('data-to', e.to)
+      .attr('data-krit', isKrit ? '1' : '0')
+      .attr('fill', 'none')
+      .attr('stroke', isKrit ? '#ef4444' : '#f5a623')
+      .attr('stroke-width', isKrit ? 1.5 : 0.7)
+      .attr('opacity', 0.55)
+      .attr('marker-end', isKrit ? 'url(#arrow-tl-krit)' : 'url(#arrow-tl)')
+  })
+
+  // ---- Plan-Knoten als horizontale Balken ----
+  const balkenG = rootG.append('g').attr('class', 'nodes')
+  knoten.forEach(k => {
+    const x0 = x(new Date(k.anfang))
+    const x1 = x(new Date(k.ende))
+    const yPos = y(k.gebaeude || '— ohne Bauteil')
+    const w = Math.max(2, x1 - x0)
+    const h = y.bandwidth()
+    const fill = k.kritisch ? '#3a1212' : k.ebene === 0 ? '#3a2a10' : '#1f1f1f'
+    const stroke = k.kritisch ? '#ef4444' : k.ebene === 0 ? '#f5a623' : '#5a3a10'
+    const grp = balkenG.append('g').attr('class', 'cursor-pointer')
+      .on('click', (ev) => { ev.stopPropagation(); onSelectKnoten(k.id) })
+    const grpEl = grp.node()
+    grpEl.__nodeId = k.id
+    grpEl.__originalStroke = stroke
+    grpEl.__originalStrokeWidth = 1
+    grp.append('rect').attr('x', x0).attr('y', yPos).attr('width', w).attr('height', h).attr('rx', 2)
+      .attr('fill', fill).attr('stroke', stroke).attr('stroke-width', 1).attr('opacity', 0.9)
+    grp.append('title').text(`${k.label}\n${k.anfang} → ${k.ende}\n${k.dauer_tage}T · L${k.ebene}${k.kritisch ? ' · KRITISCH' : ''}`)
+    if (w > 60) {
+      grp.append('text').attr('x', x0 + 4).attr('y', yPos + h / 2 + 3)
+        .attr('fill', '#fff').attr('font-size', '9px')
+        .text(`${(k.label || '').slice(0, Math.max(8, Math.floor(w / 6)))}`)
+    }
+  })
+
+  // ---- BauPilot-Anzeigen als Marker ----
+  // Pro Anzeige: Marker auf die Y-Gruppe ihres Bauteils (oder 'BauPilot-Anzeigen'-Zeile als Fallback)
+  if (anzeigen.length > 0) {
+    const markerG = rootG.append('g').attr('class', 'anzeigen')
+    anzeigen.forEach(v => {
+      const planGruppen = bauteilKennungZuPlanGruppen(v.bauteil_kennung)
+      const yKey = planGruppen.find(g => gruppen.includes(g)) || 'BauPilot-Anzeigen'
+      const xPos = x(new Date(v.vorfalls_datum))
+      const yPos = y(yKey) + y.bandwidth() * 0.15
+      const color = TYP_FARBE[v.typ] || '#999'
+      const symbol = v.typ === 'mangelanzeige' ? 'M' : v.typ === 'nachtrag' ? 'N' : v.typ === 'bedenkenanzeige' ? 'B' : 'A'
+      const grp = markerG.append('g').attr('class', 'cursor-pointer')
+        .on('click', (ev) => { ev.stopPropagation(); onSelectAnzeige(v.nummer) })
+      grp.append('circle').attr('cx', xPos).attr('cy', yPos).attr('r', 5)
+        .attr('fill', color).attr('stroke', '#1a1a1a').attr('stroke-width', 1)
+        .attr('class', 'anzeige-marker').attr('data-nr', v.nummer)
+        .attr('data-bauteil', v.bauteil_kennung || '')
+        .attr('data-typ', v.typ).attr('data-datum', v.vorfalls_datum)
+      grp.append('text').attr('x', xPos).attr('y', yPos + 3).attr('text-anchor', 'middle')
+        .attr('fill', '#1a1a1a').attr('font-size', '7px').attr('font-weight', '700')
+        .style('pointer-events', 'none').text(symbol)
+      grp.append('title').text(`${v.nummer} (${v.typ})\nDatum: ${v.vorfalls_datum}\nBauteil: ${v.bauteil_kennung || '—'}\nVerursacher: ${v.verursacher_name || '—'}\n${(v.gegenstand || '').slice(0, 80)}`)
+    })
+  }
+
+  // ---- Zoom & Pan ----
+  const zoom = d3.zoom()
+    .scaleExtent([0.3, 10])
+    .on('zoom', (event) => {
+      // Nur X skalieren — Y bleibt fest (bei Zeitleisten sinnvoll)
+      const newX = event.transform.rescaleX(x)
+      // Achse neu zeichnen
+      svg.select('g.root > g').filter((_, i, nodes) => nodes[0] === nodes[0]).remove()  // x-Achse loeschen wäre fragil — alternativ alles transformieren
+      rootG.attr('transform', `translate(${marginL},${marginT}) scale(${event.transform.k}, 1) translate(${event.transform.x / event.transform.k}, 0)`)
+    })
+  // Vereinfachter Pan/Zoom — transformiere die ganze Gruppe (X+Y)
+  const simpleZoom = d3.zoom().scaleExtent([0.3, 10])
+    .on('zoom', (event) => { rootG.attr('transform',
+      `translate(${marginL + event.transform.x},${marginT}) scale(${event.transform.k}, 1)`) })
+  svg.call(simpleZoom).on('dblclick.zoom', null)
+  return simpleZoom
+}
+
+// ================================================================
+// LV-AUSWERTUNG (Drill-Down LV -> Vorgänge)
+// ================================================================
+
+function LvAuswertungSeite() {
+  const { token } = useAuth()
+  const [lvs, setLvs] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+  const [selectedLvId, setSelectedLvId] = useState(null)
+  const [detail, setDetail] = useState(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [filter, setFilter] = useState('')
+  const [nurMitVorgaengen, setNurMitVorgaengen] = useState(false)
+  const [selectedVorgangId, setSelectedVorgangId] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const d = await bpApi('/ergebnis/lv-uebersicht', { token })
+        if (!cancelled) setLvs(d.lvs || [])
+      } catch (e) {
+        if (!cancelled) setErr(e.detail || 'Fehler')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [token])
+
+  useEffect(() => {
+    if (!selectedLvId) { setDetail(null); return }
+    let cancelled = false
+    setDetailLoading(true)
+    bpApi(`/ergebnis/lv-detail/${selectedLvId}`, { token })
+      .then(d => { if (!cancelled) setDetail(d) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setDetailLoading(false) })
+    return () => { cancelled = true }
+  }, [token, selectedLvId])
+
+  const gefiltert = useMemo(() => {
+    const f = filter.toLowerCase()
+    return lvs.filter(l => {
+      if (nurMitVorgaengen && !l.anzahl_vorgaenge) return false
+      if (!f) return true
+      return (l.nummer || '').toLowerCase().includes(f) ||
+             (l.bezeichnung || '').toLowerCase().includes(f) ||
+             (l.auftragnehmer || '').toLowerCase().includes(f)
+    })
+  }, [lvs, filter, nurMitVorgaengen])
+
+  const eur = (n) => n ? Number(n).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' €' : '—'
+
+  return h('div', { className: 'space-y-4 fade-in' },
+    h('div', null,
+      h('h2', { className: 'text-2xl font-semibold text-white' }, 'LV-Auswertung'),
+      h('p', { className: 'text-xs text-bp-muted mt-1' },
+        'Drill-Down nach Leistungsverzeichnis · Vorgänge pro LV mit Verursacher, Tagen Verzug und Schaden in €. ',
+        h('span', { className: 'italic' }, 'Brücke aus betroffene_lv_position-Strings — wächst, sobald mehr PDFs durch Pass 1 sind.')),
+    ),
+    err && h('p', { className: 'text-red-400 text-sm' }, err),
+
+    h('div', { className: 'grid grid-cols-1 lg:grid-cols-5 gap-4' },
+      // Linke Spalte: LV-Liste
+      h('div', { className: 'lg:col-span-2 bg-bp-card rounded-lg overflow-hidden flex flex-col', style: { maxHeight: '75vh' } },
+        h('div', { className: 'p-3 border-b border-white/10 space-y-2' },
+          h('input', {
+            type: 'text', placeholder: 'Filter LV-Nummer / Bezeichnung …',
+            className: 'bp-input w-full px-3 py-1.5 rounded-md text-xs',
+            value: filter, onChange: e => setFilter(e.target.value),
+          }),
+          h('label', { className: 'flex items-center gap-2 text-[10px] text-bp-muted cursor-pointer' },
+            h('input', { type: 'checkbox', checked: nurMitVorgaengen, onChange: e => setNurMitVorgaengen(e.target.checked) }),
+            'nur LVs mit Vorgängen'),
+        ),
+        h('div', { className: 'flex-1 overflow-y-auto divide-y divide-white/5' },
+          loading
+            ? h('div', { className: 'p-6 text-bp-muted text-xs text-center animate-pulse' }, 'Lade LVs …')
+            : gefiltert.length === 0
+              ? h('div', { className: 'p-6 text-bp-muted text-xs text-center' }, 'Keine LVs im Filter.')
+              : gefiltert.map(l => h('button', {
+                  key: l.id,
+                  onClick: () => setSelectedLvId(l.id),
+                  className: `w-full text-left p-3 hover:bg-white/5 transition ${selectedLvId === l.id ? 'bg-bp-400/10 border-l-2 border-bp-400' : ''}`,
+                },
+                  h('div', { className: 'flex items-baseline justify-between gap-2' },
+                    h('span', { className: 'text-sm font-mono text-bp-400' }, `LV-${l.nummer}`),
+                    h('span', { className: 'text-[10px] text-bp-muted' }, `${l.anzahl_vorgaenge} Vorg.`),
+                  ),
+                  h('div', { className: 'text-xs text-white mt-0.5 leading-tight' }, l.bezeichnung || '—'),
+                  h('div', { className: 'flex items-center gap-2 text-[10px] text-bp-muted mt-1' },
+                    l.anzahl_beha > 0 && h('span', null, `${l.anzahl_beha} BehA`),
+                    l.anzahl_bed  > 0 && h('span', null, `${l.anzahl_bed} BED`),
+                    l.anzahl_ma   > 0 && h('span', null, `${l.anzahl_ma} MA`),
+                    l.anzahl_nt   > 0 && h('span', null, `${l.anzahl_nt} NT`),
+                    (l.summe_tage > 0) && h('span', { className: 'text-amber-400' }, `${l.summe_tage} AT`),
+                    (l.summe_eur > 0)  && h('span', { className: 'text-amber-400' }, eur(l.summe_eur)),
+                  ),
+                )),
+        ),
+      ),
+
+      // Rechte Spalte: Detail
+      h('div', { className: 'lg:col-span-3 bg-bp-card rounded-lg overflow-hidden', style: { maxHeight: '75vh' } },
+        !selectedLvId
+          ? h('div', { className: 'p-12 text-center text-bp-muted text-sm' },
+              'LV links auswählen — rechts erscheinen Header, Positionen und die zugeordneten Vorgänge.')
+          : detailLoading
+            ? h('div', { className: 'p-12 text-center text-bp-muted text-sm animate-pulse' }, 'Lade Details …')
+            : detail && h(LvDetailPanel, { detail, onVorgangSelect: setSelectedVorgangId }),
+      ),
+    ),
+
+    selectedVorgangId && detail && h(VorgangModal, {
+      vorgang: (() => {
+        const v = detail.vorgaenge.find(v => v.id === selectedVorgangId)
+        if (!v) return null
+        // Detail-Endpoint liefert kompakteres Format — auf das umfangreichere
+        // Modal-Format mappen (Felder, die fehlen, bleiben undefined).
+        return { ...v, bauteil_kennung: detail.lv.bauteil_kennung, bauteil_name: detail.lv.bauteil_name }
+      })(),
+      onClose: () => setSelectedVorgangId(null),
+    }),
+  )
+}
+
+function LvDetailPanel({ detail, onVorgangSelect }) {
+  // ALLE Hooks zuerst — vor jedem Conditional-Return (Memory: react_hook_order)
+  const lv = detail.lv
+  const vorgaenge = detail.vorgaenge || []
+  const positionen = detail.positionen || []
+  const [plan, setPlan] = useState(null)
+  const [expandedOz, setExpandedOz] = useState(() => new Set())
+  const { token } = useAuth()
+
+  useEffect(() => {
+    let cancelled = false
+    bpApi('/ergebnis/nullterminplan', { token })
+      .then(p => { if (!cancelled) setPlan(p) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [token])
+
+  const date = (d) => d ? new Date(d).toLocaleDateString('de-DE') : '—'
+  const eur = (n) => n ? Number(n).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' €' : '—'
+
+  // Aggregate für die Detail-KPIs
+  const tage = vorgaenge.reduce((s, v) => s + (Number(v.z_tage) || 0), 0)
+  const euro = vorgaenge.reduce((s, v) => s + (Number(v.k_eur) || 0), 0)
+  const verursacher = new Set(vorgaenge.filter(v => v.verursacher_name).map(v => v.verursacher_name))
+
+  // OZ-Baum: gruppiere alle Positionen nach Parent-OZ-Prefix (Punkt-Split).
+  // Top-Level = Positionen, deren OZ keinen Punkt enthält ODER die als ist_titel
+  // auf Hierarchie 0/1 stehen.
+  const ozChildren = useMemo(() => {
+    const map = new Map()  // parent_oz -> child[]
+    for (const p of positionen) {
+      const lastDot = p.oz.lastIndexOf('.')
+      const parent = lastDot >= 0 ? p.oz.slice(0, lastDot) : '__root__'
+      if (!map.has(parent)) map.set(parent, [])
+      map.get(parent).push(p)
+    }
+    // Sortiere innerhalb jeder Gruppe nach numerischen OZ-Segmenten
+    for (const arr of map.values()) {
+      arr.sort((a, b) => {
+        const an = a.oz.split('.').map(s => parseInt(s) || 0)
+        const bn = b.oz.split('.').map(s => parseInt(s) || 0)
+        for (let i = 0; i < Math.max(an.length, bn.length); i++) {
+          if ((an[i] || 0) !== (bn[i] || 0)) return (an[i] || 0) - (bn[i] || 0)
+        }
+        return 0
+      })
+    }
+    return map
+  }, [positionen])
+
+  const toggleExpand = (oz) => {
+    setExpandedOz(prev => {
+      const next = new Set(prev)
+      next.has(oz) ? next.delete(oz) : next.add(oz)
+      return next
+    })
+  }
+
+  const rootKinder = ozChildren.get('__root__') || []
+
+  return h('div', { className: 'h-full overflow-y-auto' },
+    // Header
+    h('div', { className: 'p-4 border-b border-white/10' },
+      h('div', { className: 'flex items-baseline gap-2' },
+        h('span', { className: 'text-base font-mono text-bp-400' }, `LV-${lv.nummer}`),
+        lv.bauteil_kennung && h('span', {
+          className: 'px-2 py-0.5 rounded text-[10px] bg-white/5 text-bp-muted',
+        }, lv.bauteil_kennung),
+      ),
+      h('h3', { className: 'text-lg font-semibold text-white mt-1' }, lv.bezeichnung || '—'),
+      h('div', { className: 'flex flex-wrap gap-4 text-[10px] text-bp-muted mt-2' },
+        lv.auftragnehmer && h('span', null, `AN: ${lv.auftragnehmer}`),
+        h('span', null, `${lv.positionen_anzahl || positionen.length} Positionen`),
+      ),
+    ),
+    // KPI-Bar
+    h('div', { className: 'p-4 grid grid-cols-2 md:grid-cols-4 gap-2 border-b border-white/10' },
+      h(KpiCell, { label: 'Vorgänge', value: String(vorgaenge.length) }),
+      h(KpiCell, { label: 'Verursacher', value: String(verursacher.size), sub: [...verursacher].slice(0,3).join(', ') }),
+      h(KpiCell, { label: 'Σ Tage Verzug', value: String(tage), accent: tage > 0 }),
+      h(KpiCell, { label: 'Σ Schaden', value: eur(euro), accent: euro > 0 }),
+    ),
+    // Mini-Gantt: Soll-Phase + Vorgangs-Marker auf Zeitachse
+    plan && h('div', { className: 'p-4 border-b border-white/10' },
+      h('h4', { className: 'text-[11px] uppercase tracking-wider text-bp-muted mb-2' },
+        'Zeitverlauf · Soll-Phase + Störungspunkte',
+        lv.bauteil_kennung
+          ? h('span', { className: 'ml-2 normal-case text-bp-muted/70' }, `(via Bauteil ${lv.bauteil_kennung})`)
+          : h('span', { className: 'ml-2 normal-case text-amber-400/70 italic' }, '(kein Bauteil am LV — Soll-Band fehlt)'),
+      ),
+      h(MiniGantt, { vorgaenge, plan, bauteilKennung: lv.bauteil_kennung }),
+    ),
+    // Vorgangs-Liste
+    h('div', { className: 'p-4 border-b border-white/10' },
+      h('div', { className: 'flex items-center justify-between mb-2' },
+        h('h4', { className: 'text-[11px] uppercase tracking-wider text-bp-muted' }, `Vorgänge an diesem LV (${vorgaenge.length})`),
+      ),
+      vorgaenge.length === 0
+        ? h('p', { className: 'text-bp-muted text-xs py-4' }, 'Keine Vorgänge zugeordnet (Brücke wächst mit den nächsten Pässen).')
+        : h('div', { className: 'space-y-1' },
+            vorgaenge.map(v => h('button', {
+              key: v.id, onClick: () => onVorgangSelect(v.id),
+              className: 'w-full text-left p-2 rounded hover:bg-white/5 transition flex items-start gap-3',
+            },
+              h('span', {
+                className: 'shrink-0 px-2 py-0.5 rounded text-[10px] uppercase font-medium',
+                style: { backgroundColor: TYP_FARBE[v.typ] || '#666', color: '#1a1a1a' },
+              }, TYP_LABEL[v.typ] || v.typ),
+              h('div', { className: 'flex-1 min-w-0' },
+                h('div', { className: 'flex items-baseline justify-between gap-2' },
+                  h('span', { className: 'text-xs font-mono text-white' }, v.nummer),
+                  h('span', { className: 'text-[10px] text-bp-muted shrink-0' }, date(v.vorfalls_datum)),
+                ),
+                h('p', { className: 'text-[11px] text-bp-muted truncate' }, v.gegenstand || '—'),
+                h('div', { className: 'flex items-center gap-3 text-[10px] mt-0.5' },
+                  v.verursacher_name && h('span', { className: 'text-bp-muted' }, `Verursacher: `, h('span', { className: 'text-white' }, v.verursacher_name)),
+                  v.z_tage && h('span', { className: 'text-amber-400' }, `${v.z_tage} AT`),
+                  v.k_eur && h('span', { className: 'text-amber-400' }, eur(v.k_eur)),
+                ),
+              ),
+            )),
+          ),
+    ),
+    // Positionen — OZ-Drill-Down
+    positionen.length > 0 && h('div', { className: 'p-4' },
+      h('div', { className: 'flex items-center justify-between mb-2' },
+        h('h4', { className: 'text-[11px] uppercase tracking-wider text-bp-muted' },
+          `LV-Positionen (${positionen.length} gesamt)`),
+        h('div', { className: 'flex gap-2' },
+          h('button', {
+            className: 'text-[10px] text-bp-muted hover:text-bp-400',
+            onClick: () => {
+              // Alle Titel expandieren
+              const allTitel = positionen.filter(p => p.ist_titel).map(p => p.oz)
+              setExpandedOz(new Set(allTitel))
+            },
+          }, 'alle auf'),
+          h('button', {
+            className: 'text-[10px] text-bp-muted hover:text-bp-400',
+            onClick: () => setExpandedOz(new Set()),
+          }, 'alle zu'),
+        ),
+      ),
+      h('div', { className: 'space-y-0.5 text-[11px]' },
+        rootKinder.map(p => h(OzNode, {
+          key: p.id, pos: p, ozChildren, expandedOz,
+          onToggle: toggleExpand, depth: 0,
+        })),
+      ),
+    ),
+  )
+}
+
+// ---- OZ-Baumknoten (rekursiv) -----------------------------------------
+
+function OzNode({ pos, ozChildren, expandedOz, onToggle, depth }) {
+  const kinder = ozChildren.get(pos.oz) || []
+  const hasChildren = kinder.length > 0
+  const isOpen = expandedOz.has(pos.oz)
+  const eur = (n) => n ? Number(n).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' €' : ''
+  const indent = depth * 14
+
+  return h('div', null,
+    h('div', {
+      className: `flex items-baseline gap-2 py-0.5 ${hasChildren ? 'cursor-pointer hover:bg-white/5' : ''} rounded`,
+      style: { paddingLeft: `${indent}px` },
+      onClick: hasChildren ? () => onToggle(pos.oz) : undefined,
+    },
+      h('span', {
+        className: `shrink-0 w-3 text-bp-muted text-[10px] ${hasChildren ? '' : 'opacity-0'}`,
+      }, isOpen ? '▾' : '▸'),
+      h('span', {
+        className: 'font-mono text-bp-muted shrink-0',
+        style: { minWidth: '6rem' },
+      }, pos.oz),
+      h('span', {
+        className: `flex-1 truncate ${pos.ist_titel ? 'text-white font-medium' : 'text-bp-muted'}`,
+      }, pos.kurztext),
+      pos.menge && pos.einheit && h('span', { className: 'text-bp-muted text-[10px] shrink-0' },
+        `${Number(pos.menge).toLocaleString('de-DE')} ${pos.einheit}`),
+      pos.gesamtpreis && h('span', { className: 'text-bp-muted text-[10px] shrink-0 font-mono' },
+        eur(pos.gesamtpreis)),
+    ),
+    isOpen && hasChildren && h('div', null,
+      kinder.map(k => h(OzNode, {
+        key: k.id, pos: k, ozChildren, expandedOz, onToggle, depth: depth + 1,
+      })),
+    ),
+  )
+}
+
+// ---- Mini-Gantt im LV-Detail -------------------------------------------
+
+function MiniGantt({ vorgaenge, plan, bauteilKennung }) {
+  const ref = usePlotly(() => {
+    const sollPhase = bauteilKennung
+      ? (plan.phasen || []).find(p => p.bauteil_kennung === bauteilKennung)
+      : null
+    const datedVorg = vorgaenge.filter(v => v.vorfalls_datum)
+    if (!sollPhase && !datedVorg.length) {
+      return { data: [], layout: { height: 140, annotations: [{
+        text: 'Keine Daten — weder Soll-Phase noch datierte Vorgänge.',
+        showarrow: false, font: { color: '#888' }, xref: 'paper', yref: 'paper', x: 0.5, y: 0.5,
+      }]}}
+    }
+    const traces = []
+    if (sollPhase) {
+      traces.push({
+        type: 'bar', orientation: 'h',
+        x: [new Date(sollPhase.soll_ende).getTime() - new Date(sollPhase.soll_start).getTime()],
+        y: ['Soll'],
+        base: sollPhase.soll_start,
+        marker: { color: 'rgba(245,166,35,0.22)', line: { color: 'rgba(245,166,35,0.6)', width: 1 } },
+        hovertemplate: `Soll ${sollPhase.soll_start} → ${sollPhase.soll_ende}<extra></extra>`,
+        showlegend: false,
+      })
+    }
+    const typenGruppen = {}
+    for (const v of datedVorg) {
+      (typenGruppen[v.typ] = typenGruppen[v.typ] || []).push(v)
+    }
+    Object.entries(typenGruppen).forEach(([typ, vs]) => {
+      traces.push({
+        type: 'scatter', mode: 'markers',
+        x: vs.map(v => v.vorfalls_datum),
+        y: vs.map(() => sollPhase ? 'Soll' : 'Vorgänge'),
+        name: TYP_LABEL[typ] || typ,
+        marker: {
+          size: vs.map(v => Math.max(8, Math.min(22, (v.z_tage || 6) * 1.2))),
+          color: TYP_FARBE[typ] || '#999',
+          line: { color: '#1a1a1a', width: 1 },
+          symbol: typ === 'mangelanzeige' ? 'x' : typ === 'nachtrag' ? 'square' : 'circle',
+        },
+        text: vs.map(v => `${v.nummer}<br>${v.verursacher_name || '—'}<br>${v.z_tage || '?'} AT · ${v.k_eur ? Number(v.k_eur).toLocaleString('de-DE')+' €' : '—'}`),
+        hovertemplate: '%{text}<extra></extra>',
+      })
+    })
+    return {
+      data: traces,
+      layout: {
+        height: 160,
+        xaxis: { type: 'date', gridcolor: '#222' },
+        yaxis: { showticklabels: false, automargin: true },
+        legend: { orientation: 'h', y: -0.2, font: { size: 10 } },
+        margin: { l: 30, r: 20, t: 10, b: 30 },
+      },
+    }
+  }, [vorgaenge, plan, bauteilKennung])
+  return h('div', { ref, style: { width: '100%', height: 160 } })
+}
+
+// ================================================================
+// NETZPLAN (CPM-Vorgangsknoten, B-013 POC mit D3+dagre)
+// Liest /data/netzplan.json (statisches Asset) bzw. spaeter
+// /api/v1/ergebnis/netzplan (mit DB-Live-Verknuepfungen).
+// ================================================================
+
+function NetzplanSeite() {
+  const { token } = useAuth()
+  const [data, setData] = useState(null)
+  const [err, setErr] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [selectedId, setSelectedId] = useState(null)
+  const [showKritisch, setShowKritisch] = useState(false)
+  const [showLevel0, setShowLevel0] = useState(true)
+  const [vollDetail, setVollDetail] = useState(false)   // Aggregat (45) vs. Voll (2019)
+  // BauPilot-Vorgangs-Cache fuer Klick → Modal
+  const [bpVorgangCache, setBpVorgangCache] = useState({})  // nummer -> vorgang
+  const [selectedBpVorgang, setSelectedBpVorgang] = useState(null)
+  // Anzeigen-Marker: vorlaeufig entfernt, kommt im naechsten Schritt zurueck
+  const selectedAnzeigeId = null
+  // ---- Filter-State ----
+  const [filterEbenen, setFilterEbenen] = useState(new Set())   // leer = alle
+  const [filterGebaeude, setFilterGebaeude] = useState(new Set())
+  const [filterSuche, setFilterSuche] = useState('')
+  const [nurMitBauPilot, setNurMitBauPilot] = useState(false)
+  const [filterPanelOffen, setFilterPanelOffen] = useState(false)
+  const svgRef = useRef(null)
+  const zoomRef = useRef(null)   // Plotly-style: D3-Zoom-Handle persistent halten
+
+  // Laden — entweder Aggregat- oder Voll-JSON, je nach vollDetail
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setLoading(true); setErr('')
+      try {
+        if (vollDetail) {
+          // Voll-Detail: nur statisches JSON (API liefert nur Aggregat)
+          const r = await fetch('/data/netzplan_voll.json')
+          if (!r.ok) throw new Error('netzplan_voll.json nicht verfügbar')
+          const j = await r.json()
+          if (!cancelled) setData(j)
+        } else {
+          // Aggregat: erst API-Endpoint (Live-DB-Verknuepfungen), sonst statisch
+          try {
+            const d = await bpApi('/ergebnis/netzplan', { token })
+            if (!cancelled) { setData(d); return }
+          } catch {/* fallback */}
+          const r = await fetch('/data/netzplan.json')
+          if (!r.ok) throw new Error('netzplan.json nicht verfügbar')
+          const j = await r.json()
+          if (!cancelled) setData(j)
+        }
+      } catch (e) {
+        if (!cancelled) setErr(e.detail || e.message || 'Fehler')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [token, vollDetail])
+
+  // Layout-Effect: macht volles Re-Render (mit fit-Zoom). selectedId KEINE Dependency,
+  // damit Klick auf Knoten den Zoom nicht resetet.
+  useEffect(() => {
+    if (!data || !svgRef.current || !window.dagre || !window.d3) return
+    const zoom = renderNetzplan(svgRef.current, data, {
+      showKritisch, showLevel0, vollDetail,
+      filterEbenen, filterGebaeude, filterSuche, nurMitBauPilot,
+      onSelect: setSelectedId,
+    })
+    zoomRef.current = zoom
+  }, [data, showKritisch, showLevel0, vollDetail,
+      filterEbenen, filterGebaeude, filterSuche, nurMitBauPilot])
+
+  // Selektion-Effect: Stroke-Highlight + Abhängigkeits-Hervorhebung der Kanten.
+  // Bei Auswahl: nur Kanten von/zu dem Knoten leuchten orange, andere werden ausgegraut.
+  // Plus: nicht-verbundene Knoten werden gedimmt.
+  // Plus (Zeitleiste): Klick auf Anzeige hebt potenziell betroffene Plan-Knoten hervor.
+  useEffect(() => {
+    if (!svgRef.current || !window.d3) return
+    const d3 = window.d3
+    const svg = d3.select(svgRef.current)
+    const hasSel = selectedId !== null && selectedId !== undefined
+    const hasAnzeige = selectedAnzeigeId !== null && selectedAnzeigeId !== undefined
+
+    // Anzeige-Highlight (Zeitleiste): die Anzeige war am Tag X im Bauteil Y →
+    // alle Plan-Knoten markieren, deren ende > X UND deren gebaeude im
+    // entsprechenden Bauteil-Mapping liegt. Das ist der „vermutete Verzugspfad".
+    let verdacht_knoten = new Set()
+    if (hasAnzeige && bpVorgangCache[selectedAnzeigeId]) {
+      const a = bpVorgangCache[selectedAnzeigeId]
+      const planGruppen = new Set(bauteilKennungZuPlanGruppen(a.bauteil_kennung))
+      const aDatum = a.vorfalls_datum ? new Date(a.vorfalls_datum) : null
+      if (data && aDatum) {
+        for (const k of data.knoten) {
+          if (!k.gebaeude || !planGruppen.has(k.gebaeude)) continue
+          if (!k.ende) continue
+          if (new Date(k.ende) >= aDatum) verdacht_knoten.add(k.id)
+        }
+      }
+    }
+
+    // 1) Knoten: Highlight des selektierten + Dimmen der nicht-verbundenen
+    // Sammle verbundene Knoten-IDs (Nachbarn) aus den Kanten
+    const verbundene = new Set()
+    if (hasSel) {
+      verbundene.add(selectedId)
+      svg.selectAll('path.edge').each(function() {
+        const f = parseInt(this.getAttribute('data-from'))
+        const t = parseInt(this.getAttribute('data-to'))
+        if (f === selectedId) verbundene.add(t)
+        if (t === selectedId) verbundene.add(f)
+      })
+    }
+
+    svg.selectAll('g.nodes > g').each(function() {
+      const id = this.__nodeId
+      const orig = this.__originalStroke || '#3a3a3a'
+      const sw = this.__originalStrokeWidth || 1
+      const grp = d3.select(this)
+      const rect = grp.select('rect')
+      const isVerdacht = verdacht_knoten.has(id)
+      if (hasAnzeige) {
+        // Anzeige-Modus: Verdachts-Knoten leuchten, andere gedimmt
+        if (isVerdacht) {
+          rect.attr('stroke', '#ef4444').attr('stroke-width', 2)
+          grp.attr('opacity', 1)
+        } else {
+          rect.attr('stroke', orig).attr('stroke-width', sw)
+          grp.attr('opacity', 0.2)
+        }
+      } else if (!hasSel) {
+        rect.attr('stroke', orig).attr('stroke-width', sw)
+        grp.attr('opacity', 1)
+      } else if (id === selectedId) {
+        rect.attr('stroke', '#f5a623').attr('stroke-width', 2.8)
+        grp.attr('opacity', 1)
+      } else if (verbundene.has(id)) {
+        rect.attr('stroke', orig).attr('stroke-width', sw)
+        grp.attr('opacity', 1)
+      } else {
+        rect.attr('stroke', orig).attr('stroke-width', sw)
+        grp.attr('opacity', 0.25)
+      }
+    })
+
+    // Anzeige-Marker hervorheben (in Zeitleiste)
+    svg.selectAll('circle.anzeige-marker').each(function() {
+      const nr = this.getAttribute('data-nr')
+      const sel = d3.select(this)
+      if (hasAnzeige && nr === selectedAnzeigeId) {
+        sel.attr('r', 9).attr('stroke', '#f5a623').attr('stroke-width', 2.5)
+      } else {
+        sel.attr('r', 5).attr('stroke', '#1a1a1a').attr('stroke-width', 1)
+        sel.attr('opacity', hasAnzeige ? 0.4 : 1)
+      }
+    })
+
+    // Kanten in Zeitleisten-Sicht (separate Klasse 'edge-tl')
+    svg.selectAll('path.edge-tl').each(function() {
+      const f = parseInt(this.getAttribute('data-from'))
+      const t = parseInt(this.getAttribute('data-to'))
+      const isKrit = this.getAttribute('data-krit') === '1'
+      const sel = d3.select(this)
+      if (hasAnzeige) {
+        const beteiligt = verdacht_knoten.has(f) || verdacht_knoten.has(t)
+        sel.attr('stroke', beteiligt ? '#ef4444' : '#4a4a4a')
+          .attr('stroke-width', beteiligt ? 1.5 : 0.4)
+          .attr('opacity', beteiligt ? 0.9 : 0.1)
+      } else if (!hasSel) {
+        sel.attr('stroke', isKrit ? '#ef4444' : '#f5a623')
+          .attr('stroke-width', isKrit ? 1.5 : 0.7)
+          .attr('opacity', 0.55)
+      } else if (f === selectedId || t === selectedId) {
+        sel.attr('stroke', isKrit ? '#ef4444' : '#f5a623')
+          .attr('stroke-width', isKrit ? 2.2 : 1.6).attr('opacity', 1)
+      } else {
+        sel.attr('stroke', '#4a4a4a').attr('stroke-width', 0.4).attr('opacity', 0.12)
+      }
+    })
+
+    // 2) Kanten: nur die verbundenen leuchten orange, der Rest ist grau gedimmt
+    svg.selectAll('path.edge').each(function() {
+      const f = parseInt(this.getAttribute('data-from'))
+      const t = parseInt(this.getAttribute('data-to'))
+      const isKrit = this.getAttribute('data-krit') === '1'
+      const sel = d3.select(this)
+      const beteiligt = !hasSel || f === selectedId || t === selectedId
+      if (!hasSel) {
+        // Default-Zustand: orange (oder rot wenn kritisch), volle Opacity
+        sel.attr('stroke', isKrit ? '#ef4444' : '#f5a623')
+           .attr('stroke-width', isKrit ? 1.8 : 1.0)
+           .attr('opacity', vollDetail ? 0.55 : 0.8)
+           .attr('marker-end', isKrit ? 'url(#arrow-krit)' : 'url(#arrow)')
+      } else if (beteiligt) {
+        // Hervorgehoben: dicker, voll deckend, orange (kritisch bleibt rot)
+        sel.attr('stroke', isKrit ? '#ef4444' : '#f5a623')
+           .attr('stroke-width', isKrit ? 2.4 : 1.8)
+           .attr('opacity', 1)
+           .attr('marker-end', isKrit ? 'url(#arrow-krit)' : 'url(#arrow)')
+      } else {
+        // Gedimmt: grau, transparent
+        sel.attr('stroke', '#4a4a4a')
+           .attr('stroke-width', 0.6)
+           .attr('opacity', 0.15)
+           .attr('marker-end', null)
+      }
+    })
+  }, [selectedId, data, vollDetail, showKritisch, showLevel0,
+      bpVorgangCache, filterEbenen, filterGebaeude, filterSuche, nurMitBauPilot])
+
+  // BauPilot-Vorgangs-Cache initial laden (einmalig, fuer Klick-zu-Modal)
+  useEffect(() => {
+    let cancelled = false
+    bpApi('/ergebnis/vorgaenge', { token })
+      .then(d => {
+        if (cancelled) return
+        const map = {}
+        for (const v of (d.vorgaenge || [])) map[v.nummer] = v
+        setBpVorgangCache(map)
+      })
+      .catch(() => {/* still */})
+    return () => { cancelled = true }
+  }, [token])
+
+  // Knoten-Map und Kanten-Index (Vorgänger/Nachfolger pro Knoten)
+  const knotenById = useMemo(() => {
+    const m = new Map()
+    if (data) data.knoten.forEach(k => m.set(k.id, k))
+    return m
+  }, [data])
+  const nachbarn = useMemo(() => {
+    const pre = new Map(), suc = new Map()
+    if (!data) return { pre, suc }
+    for (const e of data.kanten) {
+      if (!suc.has(e.from)) suc.set(e.from, [])
+      if (!pre.has(e.to)) pre.set(e.to, [])
+      suc.get(e.from).push({ id: e.to, typ: e.typ })
+      pre.get(e.to).push({ id: e.from, typ: e.typ })
+    }
+    return { pre, suc }
+  }, [data])
+
+  // Ableiten aus Daten: alle vorkommenden Ebenen + Gebaeude (für Filter-Pillen)
+  const ebenenInDaten = useMemo(() => {
+    if (!data) return []
+    return [...new Set(data.knoten.map(k => k.ebene))].sort()
+  }, [data])
+  const gebaeudeInDaten = useMemo(() => {
+    if (!data) return []
+    return [...new Set(data.knoten.map(k => k.gebaeude).filter(Boolean))].sort()
+  }, [data])
+  const toggleSet = (current, setter) => (val) => {
+    const next = new Set(current)
+    next.has(val) ? next.delete(val) : next.add(val)
+    setter(next)
+  }
+  const resetFilter = () => {
+    setFilterEbenen(new Set()); setFilterGebaeude(new Set())
+    setFilterSuche(''); setNurMitBauPilot(false)
+    setShowKritisch(false); setShowLevel0(true)
+  }
+  const aktivFilterCount = filterEbenen.size + filterGebaeude.size +
+    (filterSuche ? 1 : 0) + (nurMitBauPilot ? 1 : 0) + (showKritisch ? 1 : 0)
+
+  if (loading) return h('p', { className: 'text-bp-muted text-sm py-12 text-center animate-pulse' }, 'Lade Netzplan …')
+  if (err) return h('p', { className: 'text-red-400 text-sm py-12 text-center' }, err)
+  if (!data) return null
+
+  const selected = selectedId && data.knoten.find(k => k.id === selectedId)
+
+  const resetZoom = () => {
+    if (zoomRef.current && svgRef.current && window.d3) {
+      window.d3.select(svgRef.current).transition().duration(400)
+        .call(zoomRef.current.transform, window.d3.zoomIdentity)
+    }
+  }
+
+  return h('div', { className: 'space-y-3 fade-in' },
+    h('div', { className: 'flex items-end justify-between flex-wrap gap-3' },
+      h('div', null,
+        h('h2', { className: 'text-2xl font-semibold text-white' }, 'Vorgangsknotennetzplan'),
+        h('p', { className: 'text-xs text-bp-muted mt-1' },
+          `${data.knoten_anzahl || data.knoten.length} Knoten · ${data.kanten_anzahl || data.kanten.length} Kanten · `,
+          vollDetail ? h('span', { className: 'text-amber-400' }, 'VOLL-Detail (alle Ebenen)') : 'L0/L1-Aggregat',
+          ` · Stand: ${(data.stand || '—').slice(0,40)}`,
+        ),
+      ),
+      h('div', { className: 'flex items-center gap-2 text-xs' },
+        // Segmented Switch: Übersicht vs. Detailansicht
+        h('div', { className: 'inline-flex rounded-md border border-white/10 overflow-hidden' },
+          h('button', {
+            onClick: () => setVollDetail(false),
+            className: `px-3 py-1.5 text-xs transition ${!vollDetail ? 'bg-bp-400 text-bp-dark font-medium' : 'text-bp-muted hover:text-white hover:bg-white/5'}`,
+            title: 'Aggregierte L0/L1-Sicht (45 Knoten)',
+          }, 'Übersicht'),
+          h('button', {
+            onClick: () => setVollDetail(true),
+            className: `px-3 py-1.5 text-xs transition ${vollDetail ? 'bg-bp-400 text-bp-dark font-medium' : 'text-bp-muted hover:text-white hover:bg-white/5'}`,
+            title: 'Alle 2019 Plan-Vorgänge',
+          }, 'Detailansicht'),
+        ),
+        h('button', {
+          className: `bp-btn-outline px-3 py-1 rounded text-xs flex items-center gap-1 ${filterPanelOffen ? 'border-bp-400 text-bp-400' : ''}`,
+          onClick: () => setFilterPanelOffen(!filterPanelOffen),
+          title: 'Filter-Schaltliste ein-/ausklappen',
+        }, '⚙ Filter', aktivFilterCount > 0 && h('span', {
+          className: 'bg-bp-400 text-bp-dark rounded-full px-1.5 text-[10px] font-semibold',
+        }, aktivFilterCount)),
+        h('button', {
+          className: 'bp-btn-outline px-3 py-1 rounded text-xs',
+          onClick: resetZoom,
+          title: 'Zoom zurücksetzen',
+        }, '⌖ Reset'),
+      ),
+    ),
+
+    // ---- Filter-Schaltliste (einklappbar) ----
+    filterPanelOffen && h('div', { className: 'bg-bp-card rounded-lg p-3 space-y-2 text-xs' },
+      // Suche
+      h('div', { className: 'flex items-center gap-2' },
+        h('span', { className: 'text-[10px] uppercase tracking-wider text-bp-muted w-20 shrink-0' }, 'Suche'),
+        h('input', {
+          type: 'text', placeholder: 'Label oder Nummer …',
+          className: 'bp-input flex-1 px-2 py-1 rounded text-xs',
+          value: filterSuche, onChange: e => setFilterSuche(e.target.value),
+        }),
+        h('button', {
+          className: 'text-[10px] text-bp-muted hover:text-bp-400',
+          onClick: resetFilter,
+        }, 'alle Filter zurücksetzen'),
+      ),
+      // Ebenen
+      h('div', { className: 'flex items-center gap-1 flex-wrap' },
+        h('span', { className: 'text-[10px] uppercase tracking-wider text-bp-muted w-20 shrink-0' }, 'Ebene'),
+        ebenenInDaten.map(lvl => {
+          const aktiv = filterEbenen.size === 0 || filterEbenen.has(lvl)
+          return h('button', {
+            key: lvl,
+            onClick: toggleSet(filterEbenen, setFilterEbenen).bind(null, lvl),
+            className: `px-2 py-0.5 rounded-full text-[10px] border transition ${
+              filterEbenen.has(lvl)
+                ? 'bg-bp-400 text-bp-dark border-bp-400 font-medium'
+                : 'bg-transparent text-bp-muted border-white/10 hover:border-bp-400'
+            }`,
+          }, `L${lvl}`)
+        }),
+        h('span', { className: 'text-[10px] text-bp-muted/60 italic ml-2' },
+          filterEbenen.size === 0 ? '(leer = alle)' : `${filterEbenen.size} gewählt`),
+      ),
+      // Gebäude/Bezug
+      gebaeudeInDaten.length > 0 && h('div', { className: 'flex items-start gap-1 flex-wrap' },
+        h('span', { className: 'text-[10px] uppercase tracking-wider text-bp-muted w-20 shrink-0 mt-1' }, 'Bauteil'),
+        gebaeudeInDaten.slice(0, 20).map(geb => h('button', {
+          key: geb,
+          onClick: toggleSet(filterGebaeude, setFilterGebaeude).bind(null, geb),
+          className: `px-2 py-0.5 rounded-full text-[10px] border transition ${
+            filterGebaeude.has(geb)
+              ? 'bg-bp-400 text-bp-dark border-bp-400 font-medium'
+              : 'bg-transparent text-bp-muted border-white/10 hover:border-bp-400'
+          }`,
+          title: geb,   // Original-Code als Tooltip
+        }, gebaeudeLabel(geb))),
+        gebaeudeInDaten.length > 20 && h('span', { className: 'text-[10px] text-bp-muted/60' },
+          `+${gebaeudeInDaten.length - 20} weitere …`),
+      ),
+      // Bool-Filter
+      h('div', { className: 'flex items-center gap-4 flex-wrap pt-1' },
+        !vollDetail && h('label', { className: 'flex items-center gap-1 text-bp-muted cursor-pointer' },
+          h('input', { type: 'checkbox', checked: showLevel0, onChange: e => setShowLevel0(e.target.checked) }),
+          'L0 zeigen'),
+        h('label', { className: 'flex items-center gap-1 text-bp-muted cursor-pointer' },
+          h('input', { type: 'checkbox', checked: showKritisch, onChange: e => setShowKritisch(e.target.checked) }),
+          'nur kritischer Pfad'),
+        h('label', { className: 'flex items-center gap-1 text-bp-muted cursor-pointer' },
+          h('input', { type: 'checkbox', checked: nurMitBauPilot, onChange: e => setNurMitBauPilot(e.target.checked) }),
+          'nur mit BauPilot-Verknüpfung'),
+      ),
+    ),
+
+    vollDetail && h('p', { className: 'text-[11px] text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded px-3 py-2' },
+      'Detailansicht zeigt alle 2019 Vorgänge ohne Überlappung — Diagramm ist sehr hoch + lang (~7000 × 2700 px). Erstes Rendering dauert mehrere Sekunden. Mausrad zoomt, Drag verschiebt; Filter zur Eingrenzung verfügbar.'),
+
+    h('div', { className: 'grid grid-cols-1 lg:grid-cols-4 gap-3' },
+      // Links: SVG-Diagramm + optionaler Pfad-Bereich darunter
+      h('div', { className: 'lg:col-span-3 space-y-3' },
+        h('div', {
+          className: 'bg-bp-card rounded-lg overflow-hidden relative',
+          style: { height: selected ? 'calc(100vh - 430px)' : 'calc(100vh - 230px)', minHeight: '400px' },
+        },
+          h('svg', {
+            ref: svgRef,
+            style: { width: '100%', height: '100%', cursor: 'grab' },
+            onClick: () => setSelectedId(null),
+          }),
+          h('div', {
+            className: 'absolute bottom-2 left-2 text-[10px] text-bp-muted/60 bg-black/30 px-2 py-1 rounded pointer-events-none',
+          }, 'Mausrad = Zoom · Drag = Pan · Klick = Detail'),
+        ),
+        // Pfad-Bereich (nur bei Selection)
+        selected && h(PfadBereich, {
+          knoten: selected,
+          vorgaenger: (nachbarn.pre.get(selectedId) || []).map(p => ({ ...p, knoten: knotenById.get(p.id) })).filter(x => x.knoten),
+          nachfolger: (nachbarn.suc.get(selectedId) || []).map(s => ({ ...s, knoten: knotenById.get(s.id) })).filter(x => x.knoten),
+          onNavigate: (id) => setSelectedId(id),
+        }),
+      ),
+      // Rechts: Detail-Panel
+      h('div', {
+        className: 'bg-bp-card rounded-lg p-4 overflow-y-auto',
+        style: { height: 'calc(100vh - 230px)', minHeight: '500px' },
+      },
+        !selected
+          ? h('p', { className: 'text-bp-muted text-sm py-12 text-center' },
+              'Klick auf einen Knoten — Details + verknüpfte BauPilot-Vorgänge erscheinen hier.')
+          : h(NetzplanDetail, {
+              knoten: selected,
+              onClose: () => setSelectedId(null),
+              vorgaenger: (nachbarn.pre.get(selectedId) || []).map(p => ({ ...p, knoten: knotenById.get(p.id) })).filter(x => x.knoten),
+              nachfolger: (nachbarn.suc.get(selectedId) || []).map(s => ({ ...s, knoten: knotenById.get(s.id) })).filter(x => x.knoten),
+              onNavigate: (id) => setSelectedId(id),
+              bpVorgangCache,
+              onShowVorgang: (nr) => {
+                const v = bpVorgangCache[nr]
+                if (v) setSelectedBpVorgang(v)
+              },
+            }),
+      ),
+    ),
+
+    // VorgangModal fuer BauPilot-Vorgangs-Klicks aus dem Netzplan
+    selectedBpVorgang && h(VorgangModal, {
+      vorgang: selectedBpVorgang,
+      onClose: () => setSelectedBpVorgang(null),
+    }),
+
+    h('p', { className: 'text-[10px] text-bp-muted italic' },
+      'B-013 Option A (D3+dagre, CDN). Voll-Detail rendert alle 2019 Plan-Vorgänge mit 2479 Vorgänger-Beziehungen aus BWP-xlsx (2024-10-31). Asta-X83-Import (AP 3.1) + React Flow (Option C) als Nachfolge.'),
+  )
+}
+
+// Detail-Panel rechts
+function NetzplanDetail({ knoten, onClose, vorgaenger, nachfolger, onNavigate, bpVorgangCache, onShowVorgang }) {
+  const date = (d) => d ? new Date(d).toLocaleDateString('de-DE') : '—'
+  const eur = (n) => n ? Number(n).toLocaleString('de-DE', { maximumFractionDigits: 0 }) + ' €' : '—'
+  const Row = ({ l, v, accent }) => h('div', { className: 'flex justify-between gap-3 py-1 border-b border-white/5' },
+    h('span', { className: 'text-[10px] text-bp-muted uppercase tracking-wider' }, l),
+    h('span', { className: `text-xs text-right ${accent ? 'text-bp-400 font-medium' : 'text-white'}` }, v),
+  )
+  // BauPilot-Verknuepfungen aus Knoten (Nummern-Liste oder Objekt-Liste)
+  const bpVerkns = (knoten.baupilot_vorgaenge || []).map(v =>
+    typeof v === 'string' ? { nummer: v } : v
+  )
+  const bpAufgeloest = bpVerkns.map(v => ({
+    ...v,
+    cached: bpVorgangCache && bpVorgangCache[v.nummer],
+  }))
+  // Berechnete Felder
+  const heute = new Date()
+  const ende = knoten.ende ? new Date(knoten.ende) : null
+  const verzugStatus = ende ? (ende < heute ? 'überfällig' : 'in Zukunft') : null
+
+  return h('div', null,
+    h('div', { className: 'flex items-start justify-between mb-3' },
+      h('div', null,
+        h('div', { className: 'flex items-center gap-2 mb-1 flex-wrap' },
+          h('span', {
+            className: `px-2 py-0.5 rounded text-[10px] uppercase font-medium ${knoten.kritisch ? 'bg-red-500 text-white' : knoten.ebene === 0 ? 'bg-bp-400 text-bp-dark' : 'bg-white/10 text-bp-muted'}`,
+          }, knoten.kritisch ? 'kritisch' : `L${knoten.ebene}`),
+          h('span', { className: 'text-[10px] text-bp-muted font-mono' }, `#${knoten.id}`),
+          verzugStatus && h('span', {
+            className: `text-[10px] px-1.5 py-0.5 rounded ${verzugStatus === 'überfällig' ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`,
+          }, verzugStatus),
+        ),
+        h('h3', { className: 'text-sm font-semibold text-white leading-tight' }, knoten.label),
+      ),
+      h('button', { className: 'text-bp-muted hover:text-white px-2 text-lg', onClick: onClose, 'aria-label': 'Schließen' }, '×'),
+    ),
+
+    // Stammdaten
+    h('div', { className: 'mb-3' },
+      h('div', { className: 'text-[10px] uppercase tracking-wider text-bp-muted mb-1' }, 'Stammdaten'),
+      h(Row, { l: 'Anfang', v: date(knoten.anfang) }),
+      h(Row, { l: 'Ende',   v: date(knoten.ende) }),
+      h(Row, { l: 'Dauer',  v: `${knoten.dauer_tage} Tage` }),
+      knoten.gebaeude && h(Row, { l: 'Gebäude/Bezug', v: gebaeudeLabel(knoten.gebaeude) }),
+    ),
+
+    // CPM-Felder
+    (knoten.fa !== undefined) && h('div', { className: 'mt-3' },
+      h('div', { className: 'text-[10px] uppercase tracking-wider text-bp-muted mb-1' }, 'CPM-Felder (Tage ab Projektstart)'),
+      h(Row, { l: 'FA · frühester Anfang', v: knoten.fa }),
+      h(Row, { l: 'FE · frühestes Ende',   v: knoten.fe }),
+      h(Row, { l: 'SA · spätester Anfang', v: knoten.sa }),
+      h(Row, { l: 'SE · spätestes Ende',   v: knoten.se }),
+      h(Row, { l: 'GP · gesamter Puffer',  v: `${knoten.gp} Tage`, accent: knoten.gp === 0 }),
+    ),
+
+    // Vorgänger (klickbar zur Navigation)
+    vorgaenger && vorgaenger.length > 0 && h('div', { className: 'mt-4' },
+      h('div', { className: 'text-[10px] uppercase tracking-wider text-bp-muted mb-2' },
+        `Vorgänger (${vorgaenger.length})`,
+      ),
+      h('div', { className: 'space-y-1' },
+        vorgaenger.map(p => h('button', {
+          key: p.id,
+          onClick: () => onNavigate(p.id),
+          className: 'w-full text-left p-2 rounded bg-white/5 hover:bg-bp-400/15 hover:border-bp-400/50 border border-transparent transition flex items-baseline gap-2',
+        },
+          h('span', { className: 'text-[10px] font-mono text-bp-muted shrink-0' }, `#${p.id}`),
+          h('span', { className: 'text-xs text-white flex-1 truncate' }, p.knoten.label),
+          h('span', { className: 'text-[10px] text-bp-muted shrink-0' }, p.typ || 'EA'),
+        )),
+      ),
+    ),
+
+    // Nachfolger (klickbar)
+    nachfolger && nachfolger.length > 0 && h('div', { className: 'mt-4' },
+      h('div', { className: 'text-[10px] uppercase tracking-wider text-bp-muted mb-2' },
+        `Nachfolger (${nachfolger.length})`,
+      ),
+      h('div', { className: 'space-y-1' },
+        nachfolger.map(s => h('button', {
+          key: s.id,
+          onClick: () => onNavigate(s.id),
+          className: 'w-full text-left p-2 rounded bg-white/5 hover:bg-bp-400/15 hover:border-bp-400/50 border border-transparent transition flex items-baseline gap-2',
+        },
+          h('span', { className: 'text-[10px] font-mono text-bp-muted shrink-0' }, `#${s.id}`),
+          h('span', { className: 'text-xs text-white flex-1 truncate' }, s.knoten.label),
+          h('span', { className: 'text-[10px] text-bp-muted shrink-0' }, s.typ || 'EA'),
+        )),
+      ),
+    ),
+
+    // BauPilot-Verknüpfungen (klickbar → öffnet VorgangModal)
+    bpAufgeloest.length > 0 && h('div', { className: 'mt-4' },
+      h('div', { className: 'text-[10px] uppercase tracking-wider text-bp-muted mb-2' },
+        `Verknüpfte BauPilot-Vorgänge (${bpAufgeloest.length})`,
+      ),
+      h('div', { className: 'space-y-1' },
+        bpAufgeloest.map(v => h('button', {
+          key: v.nummer,
+          onClick: () => onShowVorgang(v.nummer),
+          disabled: !v.cached,
+          className: `w-full text-left p-2 rounded transition flex items-start gap-2 ${
+            v.cached
+              ? 'bg-white/5 hover:bg-bp-400/15 border border-transparent hover:border-bp-400/50 cursor-pointer'
+              : 'bg-white/2 border border-white/5 opacity-60 cursor-not-allowed'
+          }`,
+        },
+          h('span', {
+            className: 'shrink-0 px-1.5 py-0.5 rounded text-[10px] uppercase font-medium',
+            style: v.cached ? { backgroundColor: TYP_FARBE[v.cached.typ] || '#666', color: '#1a1a1a' } : null,
+          }, v.cached ? (TYP_LABEL[v.cached.typ] || v.cached.typ) : '?'),
+          h('div', { className: 'flex-1 min-w-0' },
+            h('div', { className: 'flex items-baseline gap-2' },
+              h('span', { className: 'text-xs font-mono text-white' }, v.nummer),
+              v.cached && v.cached.z_tage && h('span', { className: 'text-[10px] text-amber-400' }, `${v.cached.z_tage} AT`),
+              v.cached && v.cached.k_eur && h('span', { className: 'text-[10px] text-amber-400' }, eur(v.cached.k_eur)),
+            ),
+            v.cached && v.cached.gegenstand && h('p', { className: 'text-[10px] text-bp-muted truncate' }, v.cached.gegenstand),
+            v.cached && v.cached.verursacher_name && h('p', { className: 'text-[10px] text-bp-muted' },
+              'Verursacher: ', h('span', { className: 'text-white' }, v.cached.verursacher_name)),
+            !v.cached && h('p', { className: 'text-[10px] text-bp-muted italic' }, 'Vorgang noch nicht geladen — Refresh in 1-2 s'),
+          ),
+        )),
+      ),
+    ),
+
+    // Hinweis-Box
+    bpAufgeloest.length === 0 && h('div', { className: 'mt-4 p-2 bg-white/2 rounded text-[10px] text-bp-muted italic' },
+      'Keine direkten BauPilot-Vorgänge an diesem Plan-Knoten dokumentiert. Bei L0/L1-Knoten kommen Verknüpfungen aus der „Gebäude"-Spalte des xlsx (Beh-/NT-Verweise).'),
+  )
+}
+
+// Mapping ARGE-interne xlsx-Codes → offizielle Bezeichnung (Konzept v0.4 §5)
+function gebaeudeLabel(g) {
+  if (!g) return '— ohne Bauteil'
+  if (/^J3[0-4]$/.test(g)) return 'Geb. ' + g.substring(1)
+  const m = g.match(/^J34_([123])$/)
+  if (m) return 'Geb. 34 / Teil ' + m[1]
+  if (g === 'J00') return 'projektweit'
+  if (g.toLowerCase().startsWith('aussen') || g.toLowerCase().startsWith('außen')) return 'Außenanlagen'
+  return g  // Beh X, NT X etc. unveraendert
+}
+
+// Knoten-Label fuer Anzeige: J-Codes (auch im Vorgangsname) als Geb. xx schreiben
+function nodeLabel(label) {
+  if (!label) return ''
+  // Trim + ggf. fuehrende Sammelvorgang-Zeichen (Pluszeichen, Bindestriche) entfernen
+  const t = label.trim()
+  // Reines J30..J34, J34_x, J00
+  if (/^J3[0-4]$/.test(t) || /^J34_[123]$/.test(t) || t === 'J00') {
+    return gebaeudeLabel(t)
+  }
+  return t
+}
+
+// Render-Funktion — Zeit-Netzplan: X = Zeit, Y = Lane(Bauteil) + Sub-Lane bei Ueberlappung.
+// Knoten bleiben CPM-Boxen wie vorher, Kanten weiter als Bezier-Vorgaenger-Pfeile.
+function renderNetzplan(svgEl, data, opts) {
+  try {
+    return renderNetzplanImpl(svgEl, data, opts)
+  } catch (err) {
+    console.error('[Netzplan] Render-Fehler:', err)
+    const d3 = window.d3
+    const svg = d3.select(svgEl)
+    svg.selectAll('*').remove()
+    svg.append('text').attr('x', 20).attr('y', 40)
+      .attr('fill', '#ef4444').attr('font-size', '14px').attr('font-weight', '600')
+      .text('Render-Fehler:')
+    svg.append('text').attr('x', 20).attr('y', 65)
+      .attr('fill', '#fbbf24').attr('font-size', '12px')
+      .text(String(err.message || err).slice(0, 200))
+    svg.append('text').attr('x', 20).attr('y', 90)
+      .attr('fill', '#9ca3af').attr('font-size', '10px')
+      .text('Details in der Browser-Konsole (F12)')
+    return d3.zoom()
+  }
+}
+
+function renderNetzplanImpl(svgEl, data, opts) {
+  const { showKritisch, showLevel0, onSelect, vollDetail,
+          filterGebaeude, filterSuche, nurMitBauPilot } = opts
+  // Detailansicht: wenn der Nutzer keine Ebenen-Filter gesetzt hat, defaulten wir
+  // auf L≤3 (510 statt 2019 Knoten) — sonst wird das Diagramm 5000+ px hoch und
+  // der Browser haengt. Tiefere Ebenen kann der Nutzer ueber das Filter-Panel
+  // dazuschalten (Pillen L4, L5, L6).
+  // KEIN Default-Filter mehr — Detailansicht zeigt alle 2019 Knoten.
+  // Filter sind nur aktiv, wenn der Nutzer ausdruecklich Pillen klickt.
+  const filterEbenen = opts.filterEbenen
+  // Filter — Reihenfolge: zuerst die einfachen, dann die teuren
+  let knoten = data.knoten.filter(k => vollDetail || showLevel0 || k.ebene !== 0)
+  if (showKritisch) knoten = knoten.filter(k => k.kritisch || (k.ebene === 0 && !vollDetail))
+  if (filterEbenen && filterEbenen.size > 0)
+    knoten = knoten.filter(k => filterEbenen.has(k.ebene))
+  if (filterGebaeude && filterGebaeude.size > 0)
+    knoten = knoten.filter(k => k.gebaeude && filterGebaeude.has(k.gebaeude))
+  if (nurMitBauPilot)
+    knoten = knoten.filter(k => (k.baupilot_vorgaenge && k.baupilot_vorgaenge.length > 0)
+                              || (data.verbindungen_zu_baupilot && data.verbindungen_zu_baupilot[k.id]))
+  if (filterSuche && filterSuche.trim()) {
+    const s = filterSuche.toLowerCase().trim()
+    knoten = knoten.filter(k =>
+      (k.label || '').toLowerCase().includes(s) || String(k.id).includes(s))
+  }
+  const idSet = new Set(knoten.map(k => k.id))
+  const kanten = data.kanten.filter(e => idSet.has(e.from) && idSet.has(e.to))
+
+  const d3 = window.d3
+  if (knoten.length === 0) {
+    const svgEarly = d3.select(svgEl)
+    svgEarly.selectAll('*').remove()
+    svgEarly.append('text')
+      .attr('x', '50%').attr('y', '50%')
+      .attr('text-anchor', 'middle').attr('dominant-baseline', 'middle')
+      .attr('fill', '#888').attr('font-size', '14px')
+      .text('Keine Knoten im aktuellen Filter')
+    return d3.zoom()
+  }
+
+  // Box-Geometrie. Beide Sichten: einheitliche kompakte Beschriftung.
+  const nodeW = vollDetail ? 200 : 200
+  const nodeH = vollDetail ? 38 : 52      // Uebersicht etwas hoeher (3 Label-Zeilen erlaubt)
+  const subLaneGap = vollDetail ? 5 : 8
+  const laneGap = vollDetail ? 0 : 24
+  const xPaddingPerDay = vollDetail ? 3.0 : 1.2
+  const margin = { top: 50, right: 40, bottom: 30, left: vollDetail ? 30 : 140 }
+  console.log(`[Netzplan] Modus=${vollDetail ? 'VOLL' : 'AGG'}, Knoten=${knoten.length}, Kanten=${kanten.length}`)
+  const tStart = performance.now()
+
+  // Filter Knoten mit gueltigen Daten
+  knoten = knoten.filter(k => k.anfang && k.ende)
+  const idSet2 = new Set(knoten.map(k => k.id))
+  const kanten2 = kanten.filter(e => idSet2.has(e.from) && idSet2.has(e.to))
+
+  // X-Skala: alle Knoten-Daten (anfang+ende) als Domain
+  const allDates = []
+  knoten.forEach(k => { allDates.push(new Date(k.anfang)); allDates.push(new Date(k.ende)) })
+  const xMin = d3.min(allDates), xMax = d3.max(allDates)
+  const totalDays = Math.max(30, (xMax - xMin) / (1000 * 60 * 60 * 24))
+  const totalW = Math.max(1600, totalDays * xPaddingPerDay)
+  const x = d3.scaleTime().domain([xMin, xMax]).range([0, totalW])
+
+  // Lane-Strategie:
+  //   Übersicht: pro gebaeude eine Lane (J30..AUSS) — Bauteile sind sinnvolle Gruppen
+  //   Detailansicht: KEINE Lanes — alle Knoten in einer einzigen virtuellen Lane,
+  //   nur in Sub-Reihen gepackt damit nichts überlappt. Diagramm wird hoch+lang
+  //   gestreckt, dafür gut lesbar.
+  const laneOrder = (g) => {
+    if (!g) return 99
+    if (/^J3[0-4]$/.test(g)) return parseInt(g.substring(1))
+    if (/^J34_[123]$/.test(g)) return 34 + parseFloat('0.' + g.slice(-1))
+    if (g === 'J00') return 10
+    if (g.startsWith('J')) return 50
+    return 80
+  }
+  const laneKey = (k) => vollDetail ? 'alle' : (k.gebaeude || '— ohne Bauteil')
+  const lanes = vollDetail
+    ? ['alle']
+    : [...new Set(knoten.map(laneKey))].sort((a, b) => laneOrder(a) - laneOrder(b) || a.localeCompare(b))
+
+  // Sub-Lanes unbegrenzt — Detailansicht soll alle Knoten ohne Ueberlappung zeigen.
+  const maxSubLanes = 9999
+  const sublaneOf = {}
+  const subLaneCount = {}
+  lanes.forEach(lane => {
+    const sortiert = knoten.filter(k => laneKey(k) === lane)
+      .sort((a, b) => new Date(a.anfang) - new Date(b.anfang))
+    const reihen = []
+    sortiert.forEach((k, idx) => {
+      const xL = x(new Date(k.anfang))
+      const xR = xL + nodeW
+      let placed = -1
+      for (let i = 0; i < reihen.length; i++) {
+        if (reihen[i].lastRight + 8 <= xL) {
+          reihen[i].lastRight = xR
+          placed = i
+          break
+        }
+      }
+      if (placed === -1) {
+        if (reihen.length < maxSubLanes) {
+          reihen.push({ lastRight: xR })
+          placed = reihen.length - 1
+        } else {
+          // Cap erreicht — rotiere durch Sub-Lanes (Modulo). Knoten ueberlappen.
+          placed = idx % maxSubLanes
+          if (reihen[placed]) reihen[placed].lastRight = xR
+        }
+      }
+      sublaneOf[k.id] = placed
+    })
+    subLaneCount[lane] = Math.max(1, reihen.length)
+  })
+
+  // Lane-Y-Positionen berechnen (kumulierte Hoehe)
+  const laneY = {}
+  let yCursor = 0
+  lanes.forEach(lane => {
+    laneY[lane] = yCursor
+    const h = subLaneCount[lane] * nodeH + (subLaneCount[lane] - 1) * subLaneGap
+    yCursor += h + laneGap
+  })
+  const totalH = Math.max(400, yCursor)
+
+  // Knoten-Position berechnen
+  const posOf = {}   // id → {x, y}
+  knoten.forEach(k => {
+    const lane = laneKey(k)
+    const sub = sublaneOf[k.id] || 0
+    posOf[k.id] = {
+      x: x(new Date(k.anfang)),
+      y: laneY[lane] + sub * (nodeH + subLaneGap),
+    }
+  })
+
+  // SVG aufräumen
+  const svg = d3.select(svgEl)
+  svg.selectAll('*').remove()
+
+  // viewBox auf SVG-Element-Pixel-Groesse: KEIN preserveAspectRatio-Auto-Fit.
+  // Skalierung erfolgt ausschliesslich ueber zoom.transform (sonst doppelte
+  // Skalierung → Knoten werden unleserlich klein).
+  const gw = totalW + margin.left + margin.right
+  const gh = totalH + margin.top + margin.bottom
+  const svgRect2 = svgEl.getBoundingClientRect()
+  const svgW = svgRect2.width || 1200
+  const svgH = svgRect2.height || 700
+  svg.attr('viewBox', `0 0 ${svgW} ${svgH}`).attr('preserveAspectRatio', 'xMinYMin meet')
+
+  // Root-Gruppe (per d3.zoom transformiert)
+  const rootG = svg.append('g').attr('class', 'root')
+  const inner = rootG.append('g').attr('transform', `translate(${margin.left},${margin.top})`)
+
+  // Zeit-Achse oben
+  const ticksCount = Math.min(24, Math.round(totalW / 110))
+  const xAxis = d3.axisTop(x).ticks(ticksCount).tickFormat(d3.timeFormat('%b %Y'))
+  inner.append('g').attr('class', 'x-axis').call(xAxis)
+    .attr('color', '#9ca3af').attr('font-size', '10px')
+  // Vertikale Gitter-Linien an Tick-Positionen
+  inner.append('g').selectAll('line.grid')
+    .data(x.ticks(ticksCount)).enter()
+    .append('line').attr('class', 'grid')
+    .attr('x1', d => x(d)).attr('x2', d => x(d))
+    .attr('y1', 0).attr('y2', totalH)
+    .attr('stroke', '#1f1f1f').attr('stroke-width', 1)
+
+  // Lane-Labels + Trennlinien — nur in Uebersichts-Modus
+  if (!vollDetail) {
+    const laneG = inner.append('g').attr('class', 'lanes')
+    lanes.forEach(lane => {
+      const y0 = laneY[lane] - laneGap / 2 + 4
+      const yMid = laneY[lane] + (subLaneCount[lane] * nodeH + (subLaneCount[lane] - 1) * subLaneGap) / 2
+      laneG.append('text').attr('x', -10).attr('y', yMid).attr('text-anchor', 'end')
+        .attr('fill', '#e5e7eb').attr('font-size', '11px').attr('font-weight', '600')
+        .attr('dominant-baseline', 'middle')
+        .text(gebaeudeLabel(lane))
+      laneG.append('text').attr('x', -10).attr('y', yMid + 12).attr('text-anchor', 'end')
+        .attr('fill', '#6b7280').attr('font-size', '9px')
+        .attr('dominant-baseline', 'middle')
+        .text(`${knoten.filter(k => laneKey(k) === lane).length} Vg.`)
+      laneG.append('line')
+        .attr('x1', 0).attr('x2', totalW)
+        .attr('y1', y0).attr('y2', y0)
+        .attr('stroke', '#2a2a2a').attr('stroke-width', 0.5)
+    })
+  }
+
+  // Heute-Linie
+  const heute = new Date()
+  if (heute >= xMin && heute <= xMax) {
+    inner.append('line').attr('x1', x(heute)).attr('x2', x(heute))
+      .attr('y1', 0).attr('y2', totalH)
+      .attr('stroke', '#10b981').attr('stroke-width', 1).attr('opacity', 0.5)
+      .attr('stroke-dasharray', '4,3')
+    inner.append('text').attr('x', x(heute) + 4).attr('y', -8)
+      .attr('fill', '#10b981').attr('font-size', '9px').text('heute')
+  }
+
+  // Aliase für Kompatibilität mit dem alten Rendering-Code unten
+  const rootGOld = inner   // ehemals "rootG"
+  // Definitions: Pfeilspitze (orange = BauPilot-Akzent, rot = kritischer Pfad)
+  const defs = svg.append('defs')
+  defs.append('marker').attr('id', 'arrow').attr('viewBox', '0 -5 10 10').attr('refX', 8).attr('refY', 0)
+    .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+    .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', '#f5a623')
+  defs.append('marker').attr('id', 'arrow-krit').attr('viewBox', '0 -5 10 10').attr('refX', 8).attr('refY', 0)
+    .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+    .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', '#ef4444')
+
+  // Kanten in eigene Gruppe (rendert zuerst, damit Knoten oben liegen).
+  const edgeG = inner.append('g').attr('class', 'edges')
+  const lineGen = d3.line().x(p => p.x).y(p => p.y).curve(d3.curveBasis)
+  kanten2.forEach(e => {
+    const fromK = knoten.find(k => k.id === e.from)
+    const toK = knoten.find(k => k.id === e.to)
+    if (!fromK || !toK) return
+    const isKrit = fromK.kritisch && toK.kritisch
+    const fromPos = posOf[fromK.id]
+    const toPos = posOf[toK.id]
+    // Quelle = rechte Mitte der "von"-Box
+    const x0 = fromPos.x + nodeW
+    const y0 = fromPos.y + nodeH / 2
+    // Ziel = linke Mitte der "zu"-Box
+    const x1 = toPos.x
+    const y1 = toPos.y + nodeH / 2
+    // Bezier-Kontrollpunkte fuer horizontale Tangenten
+    const dx = Math.max(20, (x1 - x0) * 0.4)
+    const pts = [
+      { x: x0, y: y0 },
+      { x: x0 + dx, y: y0 },
+      { x: x1 - dx, y: y1 },
+      { x: x1, y: y1 },
+    ]
+    edgeG.append('path').attr('d', lineGen(pts))
+      .attr('class', 'edge')
+      .attr('data-from', fromK.id).attr('data-to', toK.id)
+      .attr('data-krit', isKrit ? '1' : '0')
+      .attr('fill', 'none')
+      .attr('stroke', isKrit ? '#ef4444' : '#f5a623')
+      .attr('stroke-width', isKrit ? 1.8 : 1.0)
+      .attr('opacity', vollDetail ? 0.55 : 0.75)
+      .attr('marker-end', isKrit ? 'url(#arrow-krit)' : 'url(#arrow)')
+  })
+
+  // Knoten als CPM-Boxen — zeitlich positioniert.
+  // Voll-Detail: nur rect + title (Tooltip), kein Text → 5x weniger DOM-Elemente.
+  const nodeG = inner.append('g').attr('class', 'nodes')
+  knoten.forEach(k => {
+    const pos = posOf[k.id]
+    const fill = k.kritisch ? '#3a1212' : k.ebene === 0 ? '#3a2a10' : '#232323'
+    const stroke = k.kritisch ? '#ef4444' : k.ebene === 0 ? '#f5a623' : '#3a3a3a'
+    const grpNode = nodeG.append('g')
+      .attr('transform', `translate(${pos.x},${pos.y})`)
+      .attr('class', 'cursor-pointer')
+      .on('click', (ev) => { ev.stopPropagation(); onSelect(k.id) })
+    const grpEl = grpNode.node()
+    grpEl.__nodeId = k.id
+    grpEl.__originalStroke = stroke
+    grpEl.__originalStrokeWidth = 1.0
+    grpNode.append('rect').attr('width', nodeW).attr('height', nodeH).attr('rx', 4)
+      .attr('fill', fill).attr('stroke', stroke).attr('stroke-width', 1.0)
+    grpNode.append('title').text(`${k.label}\n${k.anfang || ''} → ${k.ende || ''}\n${k.dauer_tage}T · L${k.ebene}${k.kritisch ? ' · KRITISCH' : ''}`)
+    // Einheitliche Beschriftung fuer Uebersicht UND Detailansicht: ID + Label + L-Badge.
+    // Datum/Dauer stehen im Detail-Panel rechts.
+    grpNode.append('text').attr('x', 6).attr('y', 11)
+      .attr('fill', '#9ca3af').attr('font-size', '8.5px').attr('font-weight', '600')
+      .text(`#${k.id}`)
+    grpNode.append('text').attr('x', nodeW - 5).attr('y', 11)
+      .attr('text-anchor', 'end')
+      .attr('fill', k.kritisch ? '#ef4444' : '#9ca3af').attr('font-size', '8.5px').attr('font-weight', '600')
+      .text(`L${k.ebene}${k.kritisch ? ' krit' : ''}`)
+    const maxCharsPerLine = vollDetail ? 28 : 26
+    const maxLines = vollDetail ? 2 : 3
+    const labelTxt = grpNode.append('text').attr('x', 6).attr('y', 24)
+      .attr('fill', '#fff').attr('font-size', vollDetail ? '10.5px' : '11px').attr('font-weight', '500')
+    const display = nodeLabel(k.label)
+    const words = display.split(' ')
+    const lines = []
+    let line = ''
+    for (const w of words) {
+      const probe = line ? line + ' ' + w : w
+      if (probe.length > maxCharsPerLine && line) { lines.push(line); line = w } else { line = probe }
+    }
+    if (line) lines.push(line)
+    lines.slice(0, maxLines).forEach((l, i) => {
+      labelTxt.append('tspan').attr('x', 6).attr('dy', i === 0 ? 0 : 12)
+        .text((i === maxLines - 1 && lines.length > maxLines) ? l.slice(0, maxCharsPerLine - 1) + '…' : l)
+    })
+  })
+  console.log(`[Netzplan] Render fertig in ${(performance.now() - tStart).toFixed(0)} ms (${knoten.length} Knoten, ${kanten2.length} Kanten, ${lanes.length} Lanes)`)
+
+  // ---- Zoom & Pan ----
+  const zoom = d3.zoom()
+    .scaleExtent([0.05, 8])
+    .on('zoom', (event) => {
+      rootG.attr('transform', event.transform)
+    })
+  svg.call(zoom).on('dblclick.zoom', null)
+
+  // Initial-Fit — nutze tatsaechliche SVG-Element-Groesse
+  const sw = svgW
+  const sh = svgH
+  const scale = Math.min(sw / gw, sh / gh) * 0.95
+  const tx = (sw - gw * scale) / 2
+  const ty = (sh - gh * scale) / 2
+  svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale))
+
+  return zoom
+}
+
+// ================================================================
 // APP
+// ================================================================
+// CHATBOT-WIDGET — Floating-Sidebar, SSE-Streaming, Tool-Use
+// ================================================================
+
+// Auto-Kontext: liest aktuellen Vorgang/Knoten aus globalen Frontend-Hinweisen.
+// Andere Komponenten setzen window.__bp_chat_kontext, wir lesen das beim Senden.
+window.__bp_chat_kontext = null
+
+function ChatWidget() {
+  const { token, user } = useAuth()
+  const [offen, setOffen] = useState(false)
+  const [eingabe, setEingabe] = useState('')
+  const [verlauf, setVerlauf] = useState([])   // [{role, content, tool_calls?, tool_results?}]
+  const [streaming, setStreaming] = useState(false)
+  const [fehler, setFehler] = useState('')
+  const [vorgangModal, setVorgangModal] = useState(null)   // Vorgangs-Objekt fuer Modal
+  const [bpVorgangCache, setBpVorgangCache] = useState({})
+  const scrollRef = useRef(null)
+  const abortRef = useRef(null)
+
+  // Vorgangs-Cache laden, damit Klick auf Nummer das Modal öffnen kann
+  useEffect(() => {
+    if (!user || !token) return
+    bpApi('/ergebnis/vorgaenge', { token })
+      .then(d => {
+        const map = {}
+        for (const v of (d.vorgaenge || [])) map[v.nummer] = v
+        setBpVorgangCache(map)
+      })
+      .catch(() => {/* still */})
+  }, [token, user])
+
+  // Auto-Scroll zum Ende bei neuer Nachricht
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  }, [verlauf, streaming])
+
+  const senden = async () => {
+    const text = eingabe.trim()
+    if (!text || streaming) return
+    setEingabe('')
+    setFehler('')
+    setStreaming(true)
+    // History für Backend: nur role+content (kein tool_calls / kein meta)
+    const hist = verlauf
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role, content: m.content }))
+    // Optimistisch User-Nachricht + leere Bot-Nachricht
+    const userMsg = { role: 'user', content: text }
+    const botMsg = { role: 'assistant', content: '', tool_calls: [], tool_results: [] }
+    setVerlauf(v => [...v, userMsg, botMsg])
+    const botIdx = verlauf.length + 1
+
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    try {
+      const resp = await fetch(`${API_BASE}/chat/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ message: text, history: hist, kontext: window.__bp_chat_kontext || null }),
+        signal: controller.signal,
+      })
+      if (!resp.ok) throw new Error('Server: ' + resp.status)
+      const reader = resp.body.getReader()
+      const dec = new TextDecoder()
+      let buf = ''
+      let acc = ''
+      const toolCallsAcc = []
+      const toolResultsAcc = []
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() || ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const payload = line.slice(6).trim()
+          if (payload === '[DONE]') continue
+          let data
+          try { data = JSON.parse(payload) } catch { continue }
+          if (data.type === 'token') {
+            acc += data.content
+            setVerlauf(v => {
+              const next = v.slice()
+              next[botIdx] = { ...next[botIdx], content: acc }
+              return next
+            })
+          } else if (data.type === 'meta' && data.tool_calls) {
+            toolCallsAcc.push(...data.tool_calls)
+            setVerlauf(v => {
+              const next = v.slice()
+              next[botIdx] = { ...next[botIdx], tool_calls: [...toolCallsAcc] }
+              return next
+            })
+          } else if (data.type === 'meta' && data.tool_results) {
+            toolResultsAcc.push(...data.tool_results)
+            setVerlauf(v => {
+              const next = v.slice()
+              next[botIdx] = { ...next[botIdx], tool_results: [...toolResultsAcc] }
+              return next
+            })
+          } else if (data.type === 'error') {
+            setFehler(data.content)
+          }
+        }
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') setFehler(e.message || 'Fehler beim Senden')
+    } finally {
+      setStreaming(false)
+      abortRef.current = null
+    }
+  }
+
+  const abbrechen = () => {
+    if (abortRef.current) abortRef.current.abort()
+    setStreaming(false)
+  }
+
+  // Klick auf Vorgangs-Nummer öffnet VorgangModal (aus Cache)
+  const oeffneVorgang = (nummer) => {
+    const v = bpVorgangCache[nummer]
+    if (v) setVorgangModal(v)
+  }
+  // Renderer: parst Mini-Markdown (Tabellen, Listen, fett) und macht Vorgangs-Nummern klickbar.
+  const renderAntwort = (text) => {
+    if (!text) return null
+    const lines = text.split('\n')
+    const blocks = []
+    let i = 0
+    while (i < lines.length) {
+      const ln = lines[i]
+      // Markdown-Tabelle? Erkennung: zwei aufeinanderfolgende Zeilen mit '|',
+      // davon eine ist eine Separator-Zeile (---).
+      if (ln.includes('|') && i + 1 < lines.length && /^\s*\|?[\s\-:|]+\|[\s\-:|]+/.test(lines[i + 1])) {
+        const header = ln.split('|').map(s => s.trim()).filter(Boolean)
+        i += 2   // header + separator
+        const rows = []
+        while (i < lines.length && lines[i].includes('|') && lines[i].trim()) {
+          rows.push(lines[i].split('|').map(s => s.trim()).filter(Boolean))
+          i++
+        }
+        blocks.push(h('table', { key: blocks.length, className: 'w-full text-[10px] my-2 border border-white/10 rounded' },
+          h('thead', null, h('tr', { className: 'bg-white/5' },
+            header.map((c, j) => h('th', { key: j, className: 'text-left px-2 py-1 text-bp-muted font-medium' }, c)),
+          )),
+          h('tbody', null,
+            rows.map((r, ri) => h('tr', { key: ri, className: ri % 2 ? 'bg-white/[0.02]' : '' },
+              r.map((c, j) => h('td', { key: j, className: 'px-2 py-1 align-top' }, renderInline(c))),
+            )),
+          ),
+        ))
+        continue
+      }
+      // Liste
+      if (/^\s*[-*]\s/.test(ln)) {
+        const items = []
+        while (i < lines.length && /^\s*[-*]\s/.test(lines[i])) {
+          items.push(lines[i].replace(/^\s*[-*]\s/, ''))
+          i++
+        }
+        blocks.push(h('ul', { key: blocks.length, className: 'list-disc list-inside space-y-0.5 my-1' },
+          items.map((t, j) => h('li', { key: j }, renderInline(t))),
+        ))
+        continue
+      }
+      // Leere Zeile als Absatztrenner
+      if (!ln.trim()) {
+        blocks.push(h('div', { key: blocks.length, className: 'h-1' }))
+        i++
+        continue
+      }
+      // Normaler Absatz
+      blocks.push(h('div', { key: blocks.length }, renderInline(ln)))
+      i++
+    }
+    return blocks
+  }
+
+  // Inline-Renderer: **fett**, Vorgangs-Nummern klickbar
+  const renderInline = (text) => {
+    if (!text) return null
+    // Erst **fett** in Token aufteilen
+    const fettParts = []
+    let lastF = 0
+    const fettRe = /\*\*([^*]+)\*\*/g
+    let fm
+    while ((fm = fettRe.exec(text)) !== null) {
+      if (fm.index > lastF) fettParts.push({ t: text.slice(lastF, fm.index), bold: false })
+      fettParts.push({ t: fm[1], bold: true })
+      lastF = fettRe.lastIndex
+    }
+    if (lastF < text.length) fettParts.push({ t: text.slice(lastF), bold: false })
+
+    // Jetzt jedes Token nach Vorgangs-Nummern parsen
+    const re = /\b(BehA-\d+|BED-\d+|MA-[A-Z]?-?\d+|NTV?-[\w]+)\b/g
+    const out = []
+    let oi = 0
+    for (const seg of fettParts) {
+      const wrapper = (children) => seg.bold
+        ? h('strong', { key: oi++, className: 'font-semibold' }, children)
+        : h('span', { key: oi++ }, children)
+      const inner = []
+      let last = 0
+      let m
+      while ((m = re.exec(seg.t)) !== null) {
+        if (m.index > last) inner.push(seg.t.slice(last, m.index))
+        const nr = m[0]
+        const inCache = !!bpVorgangCache[nr]
+        inner.push(h('button', {
+          key: 'n' + oi + '-' + m.index,
+          onClick: () => oeffneVorgang(nr),
+          disabled: !inCache,
+          className: `text-bp-400 font-mono ${inCache ? 'hover:underline cursor-pointer' : 'cursor-not-allowed opacity-60'}`,
+          title: inCache ? 'Vorgangs-Detail öffnen' : 'nicht in Datenbank',
+        }, nr))
+        last = re.lastIndex
+      }
+      if (last < seg.t.length) inner.push(seg.t.slice(last))
+      re.lastIndex = 0
+      out.push(wrapper(inner.length ? inner : seg.t))
+    }
+    return out
+  }
+
+  if (!user) return null
+
+  return h('div', null,
+    // Floating-Button unten rechts
+    !offen && h('button', {
+      onClick: () => setOffen(true),
+      className: 'fixed bottom-5 right-5 z-40 bg-bp-400 hover:bg-bp-500 rounded-full shadow-2xl flex items-center justify-center transition',
+      style: { width: '56px', height: '56px' },
+      title: 'BauPilot-Assistent öffnen',
+    },
+      // BauPilot-A als SVG, weiß auf amber (analog Header)
+      h('svg', {
+        viewBox: '0 0 24 24', width: '28', height: '28', fill: '#1a1a1a',
+        style: { display: 'block' },
+      },
+        h('path', { d: 'M 12 2 L 22 22 L 17 22 L 12 10 L 7 22 L 2 22 Z' }),
+      ),
+    ),
+
+    // Panel
+    offen && h('div', {
+      className: 'fixed bottom-5 right-5 z-40 bg-bp-card border border-white/10 rounded-lg shadow-2xl flex flex-col',
+      style: { width: '420px', maxWidth: 'calc(100vw - 40px)', height: '620px', maxHeight: 'calc(100vh - 40px)' },
+    },
+      // Header
+      h('div', { className: 'flex items-center justify-between p-3 border-b border-white/10' },
+        h('div', null,
+          h('div', { className: 'text-sm font-semibold text-white' }, 'BauPilot-Assistent'),
+          h('div', { className: 'text-[10px] text-bp-muted' }, 'Antworten basieren auf DB-Daten'),
+        ),
+        h('div', { className: 'flex items-center gap-2' },
+          verlauf.length > 0 && h('button', {
+            onClick: () => { setVerlauf([]); setFehler('') },
+            className: 'text-bp-muted hover:text-white text-xs px-2 py-1 rounded hover:bg-white/5',
+            title: 'Gespräch löschen',
+          }, '↻'),
+          h('button', {
+            onClick: () => setOffen(false),
+            className: 'text-bp-muted hover:text-white text-xl leading-none px-2',
+            title: 'Schließen',
+          }, '×'),
+        ),
+      ),
+
+      // Verlauf
+      h('div', { ref: scrollRef, className: 'flex-1 overflow-y-auto p-3 space-y-3' },
+        verlauf.length === 0 && h('div', { className: 'text-center text-bp-muted text-xs py-8 space-y-3' },
+          h('div', { className: 'text-3xl' }, '👋'),
+          h('div', null, 'Stelle eine Frage zur Datenbasis.'),
+          h('div', { className: 'space-y-1.5 mt-4' },
+            ['Wie viele Behinderungen gibt es?',
+             'Welche Nachträge in Geb. 34?',
+             'Wer hat NT-026 verursacht?',
+             'Top-5 Verursacher nach Σ Tagen',
+            ].map(beispiel => h('button', {
+              key: beispiel,
+              onClick: () => setEingabe(beispiel),
+              className: 'block w-full text-left px-3 py-1.5 rounded border border-white/10 hover:border-bp-400 hover:bg-bp-400/5 text-[11px] text-bp-muted hover:text-white',
+            }, beispiel)),
+          ),
+        ),
+        verlauf.map((m, i) => h('div', {
+          key: i,
+          className: m.role === 'user' ? 'flex justify-end' : 'flex justify-start',
+        },
+          h('div', {
+            className: `max-w-[85%] rounded-lg px-3 py-2 text-xs ${
+              m.role === 'user'
+                ? 'bg-bp-400 text-bp-dark'
+                : 'bg-white/5 text-white'
+            }`,
+          },
+            // Tool-Call-Indikator (nur bei Assistant)
+            m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0 &&
+              h('div', { className: 'text-[10px] text-bp-muted mb-1 italic flex items-center gap-1' },
+                h('span', { className: 'animate-pulse' }, '🔍'),
+                ` ${m.tool_calls.length} DB-Abfrage${m.tool_calls.length > 1 ? 'n' : ''}`,
+              ),
+            // Antwort-Text mit Vorgangs-Hervorhebung
+            m.role === 'assistant'
+              ? h('div', { style: { whiteSpace: 'pre-wrap' } }, renderAntwort(m.content) || (streaming && i === verlauf.length - 1 ? '…' : '(leer)'))
+              : m.content,
+            // Tool-Quellen am Ende
+            m.role === 'assistant' && m.tool_results && m.tool_results.length > 0 &&
+              h('div', { className: 'mt-2 pt-2 border-t border-white/5 flex flex-wrap gap-1' },
+                m.tool_results.map((tr, j) => h('span', {
+                  key: j,
+                  className: 'text-[9px] text-bp-muted bg-white/5 px-1.5 py-0.5 rounded',
+                }, `${tr.name}: ${tr.summary}`)),
+              ),
+          ),
+        )),
+      ),
+
+      // Fehler-Banner
+      fehler && h('div', { className: 'mx-3 mb-2 p-2 bg-red-500/10 border border-red-500/30 rounded text-[11px] text-red-400' },
+        fehler),
+
+      // Eingabe
+      h('div', { className: 'p-3 border-t border-white/10 flex gap-2' },
+        h('input', {
+          type: 'text',
+          value: eingabe,
+          onChange: e => setEingabe(e.target.value),
+          onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); senden() } },
+          disabled: streaming,
+          placeholder: streaming ? 'Antwort wird generiert …' : 'Frage eingeben …',
+          className: 'flex-1 bp-input px-3 py-1.5 rounded text-xs',
+        }),
+        streaming
+          ? h('button', { onClick: abbrechen, className: 'bp-btn-outline px-3 py-1.5 rounded text-xs' }, 'Stop')
+          : h('button', { onClick: senden, disabled: !eingabe.trim(), className: 'bp-btn px-3 py-1.5 rounded text-xs disabled:opacity-50' }, '↵'),
+      ),
+    ),
+    // VorgangModal bei Klick auf eine Vorgangs-Nummer in der Antwort
+    vorgangModal && h(VorgangModal, {
+      vorgang: vorgangModal,
+      onClose: () => setVorgangModal(null),
+    }),
+  )
+}
+
 // ================================================================
 
 function App() {
@@ -3286,7 +6074,7 @@ function Router() {
     case 'login': return h(LoginPage)
     case 'totp_verify': return h(TotpVerifyPage)
     case 'totp_setup': return h(TotpSetupPage)
-    case 'dashboard': return h(DashboardPage)
+    case 'dashboard': return h('div', null, h(DashboardPage), h(ChatWidget))
     default: return h(LoginPage)
   }
 }
