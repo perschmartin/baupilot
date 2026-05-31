@@ -2846,8 +2846,10 @@ function VerknuepfungenSeite() {
     setAnalyseLoading(true); setErr(''); setSuccess('')
     try {
       const r = await bpApi(`/verknuepfungen/${selected.id}/analysieren?mit_llm=${mitLlm}`, { method: 'POST', token })
-      setVorschlaege(r.vorschlaege || [])
       setSuccess(`${r.methode}: ${r.neu_gespeichert} neue Vorschl\u00E4ge gespeichert`)
+      // Vorschl\u00E4ge im korrekten Format nachladen
+      const v = await bpApi(`/verknuepfungen/${selected.id}/vorschlaege`, { token })
+      setVorschlaege(v.verknuepfungen || [])
     } catch (e) { setErr(e.detail || 'Analyse fehlgeschlagen') }
     setAnalyseLoading(false)
   }
