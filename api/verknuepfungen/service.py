@@ -131,7 +131,7 @@ def finde_verknuepfungen_llm(
     quelle = db.execute(
         text("""
             SELECT v.id, v.typ::text AS typ, v.nummer, v.beschreibung,
-                   v.gewerk, lv.nummer AS lv_nummer
+                   lv.nummer AS lv_nummer
             FROM vorgaenge v
             LEFT JOIN leistungsverzeichnisse lv ON lv.id = v.lv_id
             WHERE v.id = :vid AND NOT v.geloescht
