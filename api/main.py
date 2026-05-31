@@ -31,6 +31,7 @@ from tags import tags_router
 from extraktion import extraktion_router
 from ergebnis import ergebnis_router
 from chat import chat_router
+from verknuepfungen import verknuepfungen_router
 
 structlog.configure(
     processors=[
@@ -127,3 +128,4 @@ app.include_router(tags_router)
 app.include_router(extraktion_router)
 app.include_router(ergebnis_router)
 app.include_router(chat_router)
+app.include_router(verknuepfungen_router)
