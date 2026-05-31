@@ -4,6 +4,8 @@ B-003: Schema-per-Tenant — beim Anlegen eines Mandanten wird
 automatisch ein PostgreSQL-Schema erstellt.
 """
 
+from uuid import UUID
+
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -28,7 +30,7 @@ class TenantCreate(BaseModel):
 
 
 class TenantResponse(BaseModel):
-    id: str
+    id: UUID
     name: str
     slug: str
     beschreibung: str | None

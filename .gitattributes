@@ -1,0 +1,45 @@
+# BauPilot — Git-Attribute
+# Erzwingt LF-Zeilenenden fuer alle Textdateien die in Linux-Container gehen.
+# Behebt die CRLF-Warnings beim Commit auf Windows.
+
+# Standard: auto
+* text=auto
+
+# Python — immer LF (Container ist Linux)
+*.py text eol=lf
+
+# Config/Docker — immer LF
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.cfg text eol=lf
+*.conf text eol=lf
+*.ini text eol=lf
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
+
+# Frontend — LF (nginx-Container)
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+
+# Shell
+*.sh text eol=lf
+
+# SQL — LF (wird in psql gepipt)
+*.sql text eol=lf
+
+# Markdown — auto (wird nicht in Container benutzt)
+*.md text=auto
+
+# PowerShell — CRLF (Windows-nativ)
+*.ps1 text eol=crlf
+
+# Binaer
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
