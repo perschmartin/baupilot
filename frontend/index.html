@@ -2810,6 +2810,179 @@ function BellMenu() {
 }
 
 
+// ================================================================
+// VERKNÜPFUNGEN (E12, B-002)
+// ================================================================
+
+function VerknuepfungenSeite() {
+  const { token } = useAuth()
+  const [vorgaenge, setVorgaenge] = useState([])
+  const [selected, setSelected] = useState(null)
+  const [vorschlaege, setVorschlaege] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [analyseLoading, setAnalyseLoading] = useState(false)
+  const [err, setErr] = useState('')
+  const [success, setSuccess] = useState('')
+  const [filter, setFilter] = useState('')
+
+  // Vorg\u00E4nge laden
+  useEffect(() => {
+    bpApi('/vorgaenge/?projekt=FLI&limit=50', { token })
+      .then(r => setVorgaenge(r.vorgaenge || []))
+      .catch(e => setErr(e.detail || 'Fehler beim Laden'))
+  }, [token])
+
+  // Vorschl\u00E4ge laden wenn Vorgang gew\u00E4hlt
+  useEffect(() => {
+    if (!selected) { setVorschlaege([]); return }
+    setLoading(true)
+    bpApi(`/verknuepfungen/${selected.id}/vorschlaege`, { token })
+      .then(r => { setVorschlaege(r.verknuepfungen || []); setLoading(false) })
+      .catch(e => { setErr(e.detail || 'Fehler'); setLoading(false) })
+  }, [selected, token])
+
+  const analysieren = async (mitLlm) => {
+    if (!selected) return
+    setAnalyseLoading(true); setErr(''); setSuccess('')
+    try {
+      const r = await bpApi(`/verknuepfungen/${selected.id}/analysieren?mit_llm=${mitLlm}`, { method: 'POST', token })
+      setVorschlaege(r.vorschlaege || [])
+      setSuccess(`${r.methode}: ${r.neu_gespeichert} neue Vorschl\u00E4ge gespeichert`)
+    } catch (e) { setErr(e.detail || 'Analyse fehlgeschlagen') }
+    setAnalyseLoading(false)
+  }
+
+  const bestaetige = async (vid) => {
+    try {
+      await bpApi(`/verknuepfungen/${vid}/bestaetigen`, { method: 'POST', token })
+      setSuccess('Verkn\u00FCpfung best\u00E4tigt (B-002)')
+      // Neu laden
+      const r = await bpApi(`/verknuepfungen/${selected.id}/vorschlaege`, { token })
+      setVorschlaege(r.verknuepfungen || [])
+    } catch (e) { setErr(e.detail || 'Fehler') }
+  }
+
+  const ablehnen = async (vid) => {
+    try {
+      await bpApi(`/verknuepfungen/${vid}/ablehnen`, { method: 'POST', token })
+      setSuccess('Verkn\u00FCpfung abgelehnt')
+      const r = await bpApi(`/verknuepfungen/${selected.id}/vorschlaege`, { token })
+      setVorschlaege(r.verknuepfungen || [])
+    } catch (e) { setErr(e.detail || 'Fehler') }
+  }
+
+  const filtered = vorgaenge.filter(v =>
+    !filter || v.nummer?.toLowerCase().includes(filter.toLowerCase()) ||
+    v.beschreibung?.toLowerCase().includes(filter.toLowerCase())
+  )
+
+  return h('div', { className: 'space-y-4' },
+    h('div', { className: 'flex items-center justify-between' },
+      h('h2', { className: 'text-lg font-semibold' }, 'Verkn\u00FCpfungsanalyse (E12)'),
+      h('span', { className: 'text-xs text-bp-muted' }, 'B-002: Best\u00E4tigungs-Gate'),
+    ),
+
+    h(Alert, { type: 'error' }, err),
+    h(Alert, { type: 'success' }, success),
+
+    // Vorgang ausw\u00E4hlen
+    h('div', { className: 'grid grid-cols-1 md:grid-cols-3 gap-4' },
+      h('div', { className: 'bg-bp-card rounded-lg p-4 border border-white/5 md:col-span-1' },
+        h('h3', { className: 'text-sm font-medium mb-2' }, 'Vorgang w\u00E4hlen'),
+        h('input', {
+          className: 'bp-input w-full px-3 py-2 rounded text-xs mb-2',
+          placeholder: 'Suchen (Nummer/Beschreibung)...',
+          value: filter, onChange: e => setFilter(e.target.value),
+        }),
+        h('div', { className: 'max-h-80 overflow-y-auto space-y-1' },
+          filtered.slice(0, 30).map(v =>
+            h('button', {
+              key: v.id,
+              onClick: () => { setSelected(v); setErr(''); setSuccess('') },
+              className: `w-full text-left px-3 py-2 rounded text-xs transition ${
+                selected?.id === v.id ? 'bg-bp-400/20 border border-bp-400' : 'hover:bg-white/5 border border-transparent'
+              }`,
+            },
+              h('span', { className: 'font-mono text-bp-400' }, v.nummer),
+              h('span', { className: 'text-bp-muted ml-2' }, (v.beschreibung || '').slice(0, 60)),
+            )
+          ),
+        ),
+      ),
+
+      // Verkn\u00FCpfungen + Analyse
+      h('div', { className: 'bg-bp-card rounded-lg p-4 border border-white/5 md:col-span-2' },
+        !selected
+          ? h('p', { className: 'text-bp-muted text-sm' }, 'Bitte einen Vorgang ausw\u00E4hlen.')
+          : h('div', null,
+              h('div', { className: 'flex items-center justify-between mb-4' },
+                h('div', null,
+                  h('span', { className: 'font-mono text-bp-400 text-sm' }, selected.nummer),
+                  h('span', { className: 'text-xs text-bp-muted ml-2' }, selected.typ),
+                ),
+                h('div', { className: 'flex gap-2' },
+                  h('button', {
+                    className: 'bp-btn-outline px-3 py-1.5 rounded text-xs',
+                    disabled: analyseLoading,
+                    onClick: () => analysieren(false),
+                  }, analyseLoading ? '...' : 'Deterministisch'),
+                  h('button', {
+                    className: 'bp-btn px-3 py-1.5 rounded text-xs',
+                    disabled: analyseLoading,
+                    onClick: () => analysieren(true),
+                  }, analyseLoading ? 'Analyse l\u00E4uft...' : 'Deterministisch + LLM'),
+                ),
+              ),
+
+              loading
+                ? h('p', { className: 'text-bp-muted text-xs animate-pulse' }, 'Lade Verkn\u00FCpfungen...')
+                : vorschlaege.length === 0
+                  ? h('p', { className: 'text-bp-muted text-xs' }, 'Keine Verkn\u00FCpfungen. Analyse starten \u2192')
+                  : h('div', { className: 'space-y-2' },
+                      vorschlaege.map(v =>
+                        h('div', {
+                          key: v.id,
+                          className: 'bg-white/5 rounded-lg p-3 border border-white/10',
+                        },
+                          h('div', { className: 'flex items-start justify-between' },
+                            h('div', { className: 'flex-1' },
+                              h('div', { className: 'flex items-center gap-2 mb-1' },
+                                h('span', { className: 'font-mono text-bp-400 text-xs' }, v.nummer),
+                                h('span', { className: `text-[10px] px-1.5 py-0.5 rounded ${
+                                  v.beziehungstyp === 'ursache' ? 'bg-green-900/50 text-green-300'
+                                  : v.beziehungstyp === 'llm_vorschlag' ? 'bg-amber-900/50 text-amber-300'
+                                  : 'bg-gray-700 text-gray-300'
+                                }` }, v.beziehungstyp || 'unbekannt'),
+                                v.konfidenz != null && h('span', { className: 'text-[10px] text-bp-muted' }, `${Math.round(v.konfidenz * 100)}%`),
+                                h('span', { className: 'text-[10px] text-bp-muted' }, v.richtung === 'vorwaerts' ? '\u2192 Folge' : '\u2190 Ursache'),
+                              ),
+                              h('p', { className: 'text-xs text-gray-400' }, v.beschreibung || ''),
+                            ),
+                            v.beziehungstyp === 'llm_vorschlag' && h('div', { className: 'flex gap-1 ml-2' },
+                              h('button', {
+                                className: 'text-[10px] px-2 py-1 rounded bg-green-900/50 text-green-300 hover:bg-green-800/50',
+                                onClick: () => bestaetige(v.id),
+                                title: 'B-002: Best\u00E4tigen',
+                              }, '\u2713'),
+                              h('button', {
+                                className: 'text-[10px] px-2 py-1 rounded bg-red-900/50 text-red-300 hover:bg-red-800/50',
+                                onClick: () => ablehnen(v.id),
+                                title: 'B-002: Ablehnen',
+                              }, '\u2717'),
+                            ),
+                          ),
+                          v.bestaetigt === true && h('div', { className: 'text-[10px] text-green-400 mt-1' }, `\u2705 Best\u00E4tigt${v.bestaetigt_am ? ' am ' + v.bestaetigt_am.slice(0, 10) : ''}`),
+                          v.bestaetigt === false && h('div', { className: 'text-[10px] text-red-400 mt-1' }, '\u274C Abgelehnt'),
+                        )
+                      ),
+                    ),
+            ),
+      ),
+    ),
+  )
+}
+
+
 function DashboardPage() {
   const { token, user, logout } = useAuth()
   const [tab, setTab] = useState('aufgaben')
@@ -2843,6 +3016,7 @@ function DashboardPage() {
     { id: 'kontakte', label: 'Kontakte' },
     { id: 'dokumente', label: 'Dokumente' },
     { id: 'ergebnis', label: 'Ergebnis' },
+    { id: 'verknuepfungen', label: 'Verkn\u00FCpfungen' },
     { id: 'netzplan', label: 'Netzplan' },
     { id: 'lv_auswertung', label: 'LV-Auswertung' },
     { id: 'profil', label: 'Profil' },
@@ -2908,6 +3082,7 @@ function DashboardPage() {
       tab === 'kontakte' && h(KontakteSeite),
       tab === 'dokumente' && h(DokumenteSeite),
       tab === 'ergebnis' && h(ErgebnisSeite),
+      tab === 'verknuepfungen' && h(VerknuepfungenSeite),
       tab === 'netzplan' && h(NetzplanSeite),
       tab === 'lv_auswertung' && h(LvAuswertungSeite),
       tab === 'profil' && h(ProfilSeite, { showPw, setShowPw }),
