@@ -5934,7 +5934,7 @@ function ChatWidget() {
       .map(m => ({ role: m.role, content: m.content }))
     // Optimistisch User-Nachricht + leere Bot-Nachricht
     const userMsg = { role: 'user', content: text }
-    const botMsg = { role: 'assistant', content: '', tool_calls: [], tool_results: [] }
+    const botMsg = { role: 'assistant', content: '', tool_calls: [], tool_results: [], status: '' }
     setVerlauf(v => [...v, userMsg, botMsg])
     const botIdx = verlauf.length + 1
 
@@ -5989,6 +5989,13 @@ function ChatWidget() {
             setVerlauf(v => {
               const next = v.slice()
               next[botIdx] = { ...next[botIdx], tool_results: [...toolResultsAcc] }
+              return next
+            })
+          } else if (data.type === 'status') {
+            // P3: Fortschritts-Hinweis waehrend der CPU-Wartezeit anzeigen
+            setVerlauf(v => {
+              const next = v.slice()
+              next[botIdx] = { ...next[botIdx], status: data.content }
               return next
             })
           } else if (data.type === 'error') {
@@ -6195,7 +6202,7 @@ function ChatWidget() {
               ),
             // Antwort-Text mit Vorgangs-Hervorhebung
             m.role === 'assistant'
-              ? h('div', { style: { whiteSpace: 'pre-wrap' } }, renderAntwort(m.content) || (streaming && i === verlauf.length - 1 ? '…' : '(leer)'))
+              ? h('div', { style: { whiteSpace: 'pre-wrap' } }, renderAntwort(m.content) || (streaming && i === verlauf.length - 1 ? h('span', { className: 'text-bp-muted italic' }, m.status || '…') : '(leer)'))
               : m.content,
             // Tool-Quellen am Ende
             m.role === 'assistant' && m.tool_results && m.tool_results.length > 0 &&
