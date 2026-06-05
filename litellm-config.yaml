@@ -6,11 +6,19 @@ model_list:
     litellm_params:
       model: "ollama/qwen2.5:14b"
       api_base: "http://host.docker.internal:11434"
+      extra_body:
+        keep_alive: -1
+        options:
+          num_ctx: 8192
 
   - model_name: "qwen-32b"
     litellm_params:
       model: "ollama/qwen2.5:32b"
       api_base: "http://host.docker.internal:11434"
+      extra_body:
+        keep_alive: -1
+        options:
+          num_ctx: 8192
 
   - model_name: "llama3"
     litellm_params:
@@ -29,3 +37,5 @@ general_settings:
 litellm_settings:
   telemetry: false
   drop_params: true
+  # P6: an httpx-Timeout im ChatService (120 s) angeglichen; nginx (180 s) ist aeussere Schranke.
+  request_timeout: 120

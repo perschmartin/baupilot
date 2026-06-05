@@ -25,6 +25,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-baupilot_dev}
       LITELLM_HOST: baupilot-litellm
       LITELLM_PORT: 4000
+      BP_CHAT_MODEL: ${BP_CHAT_MODEL:-default}
       OLLAMA_HOST: ${OLLAMA_HOST:-host.docker.internal}
       OLLAMA_PORT: ${OLLAMA_PORT:-11434}
       API_SECRET_KEY: ${API_SECRET_KEY:-dev_secret_change_me}
