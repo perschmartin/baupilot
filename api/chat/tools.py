@@ -60,7 +60,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximale Anzahl Treffer (default 20, max 100).",
+                        "description": "Maximale Anzahl Treffer (default 8, max 100).",
                     },
                 },
             },
@@ -175,6 +175,18 @@ def _set_tenant_search_path(db: Session) -> None:
     db.execute(text(f"SET search_path = {TENANT_SCHEMA}, public"))
 
 
+def _kurz(s: str | None, n: int = 100) -> str | None:
+    """Kuerzt Freitext fuer kompakte Tool-Ergebnisse.
+
+    Begrenzt die Prompt-Eval-Last der finalen Antwort auf CPU: lange
+    'gegenstand'-Freitexte sind der groesste Token-Treiber im Listen-Ergebnis.
+    None wird unveraendert durchgereicht.
+    """
+    if s and len(s) > n:
+        return s[:n].rstrip() + "…"
+    return s
+
+
 def tool_vorgaenge_filtern(db: Session, args: dict) -> dict:
     _set_tenant_search_path(db)
     where = [
@@ -198,7 +210,7 @@ def tool_vorgaenge_filtern(db: Session, args: dict) -> dict:
         where.append("(v.gegenstand ILIKE :suche OR v.beschreibung ILIKE :suche)")
         params["suche"] = f"%{args['suche']}%"
 
-    limit = min(int(args.get("limit") or 20), 100)
+    limit = min(int(args.get("limit") or 8), 100)
     params["limit"] = limit
 
     sql = f"""
@@ -222,7 +234,7 @@ def tool_vorgaenge_filtern(db: Session, args: dict) -> dict:
             {
                 "nummer": r["nummer"],
                 "typ": r["typ"],
-                "gegenstand": r["gegenstand"],
+                "gegenstand": _kurz(r["gegenstand"]),
                 "status": r["status"],
                 "verursacher": r["verursacher"],
                 "bauteil": r["bauteil"],
@@ -436,6 +448,9 @@ TOOL_FUNCS = {
     "lv_suche": tool_lv_suche,
     "verursacher_top": tool_verursacher_top,
 }
+
+# Whitelist gueltiger Werkzeugnamen — fuer den Phantom-Guard im ChatService.
+GUELTIGE_TOOLS = frozenset(TOOL_FUNCS)
 
 
 def tool_aufrufen(db: Session, name: str, args: dict) -> dict:

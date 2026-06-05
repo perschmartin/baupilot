@@ -4,13 +4,14 @@ Ablauf pro User-Nachricht:
   1. System-Prompt + History + neue Frage als 'messages' aufbauen
   2. Non-streaming LiteLLM-Call mit tools=TOOL_DEFINITIONS
   3. Wenn LLM tool_calls liefert: alle Tools ausfuehren, Ergebnisse als
-     'tool'-messages anhaengen, naechste Iteration (max 3 Iterationen)
+     'tool'-messages anhaengen, naechste Iteration (max 1 Tool-Iteration)
   4. Wenn LLM textuelle Antwort liefert: streamt diese als 'token'-Events
      an den Frontend-SSE-Stream
 
 Format der SSE-Events (analog ENA-CERT):
   data: {"type":"meta","tool_calls":[...]}        -> Tool wird gleich gerufen
   data: {"type":"meta","tool_results":[...]}      -> Tool-Ergebnis kurz
+  data: {"type":"status","content":"..."}         -> Fortschritts-Hinweis (UI)
   data: {"type":"token","content":"..."}          -> Antwort-Token
   data: {"type":"error","content":"..."}          -> Fehler
   data: [DONE]                                    -> Stream-Ende
@@ -26,7 +27,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from chat.prompts import systemprompt_bauen
-from chat.tools import TOOL_DEFINITIONS, tool_aufrufen
+from chat.tools import GUELTIGE_TOOLS, TOOL_DEFINITIONS, tool_aufrufen
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,12 @@ LITELLM_URL = (
     f"http://{os.environ.get('LITELLM_HOST', 'baupilot-litellm')}:"
     f"{os.environ.get('LITELLM_PORT', '4000')}/v1/chat/completions"
 )
-MODEL_NAME = os.environ.get("BP_CHAT_MODEL", "qwen-32b")
-MAX_TOOL_ITERATIONEN = 3
+MODEL_NAME = os.environ.get("BP_CHAT_MODEL", "default")
+# P3/CPU-Latenz: 1 Tool-Runde + 1 erzwungene Antwort. Verhindert das
+# Iterations-Stacking (Modell ruft greedy einen 2., oft redundanten Tool-Call),
+# das auf CPU die >170s-Timeouts ausgeloest hat. Trade-off: echte 2-Tool-
+# Drilldowns werden auf 1 Werkzeug gekuerzt (Antwort duenner, nicht falsch).
+MAX_TOOL_ITERATIONEN = 1
 TIMEOUT_SEC = 120
 
 
@@ -61,13 +66,17 @@ def stream_chat(
     sysprompt = systemprompt_bauen(kontext)
     messages: list[dict] = [{"role": "system", "content": sysprompt}]
 
-    # Letzte 8 Nachrichten als History (begrenzt um Token-Budget)
-    for m in (history or [])[-8:]:
+    # Letzte 6 Nachrichten als History (begrenzt um Token-Budget / CPU-Prompt-Eval)
+    for m in (history or [])[-6:]:
         role = m.get("role")
         content = m.get("content")
         if role in ("user", "assistant") and content:
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user_message})
+
+    # P3: sofortiges Status-Signal, damit die ~40-90s Prompt-Eval-Wartezeit
+    # auf CPU nicht als eingefrorene UI wahrgenommen wird.
+    yield _sse("status", content="Analysiere deine Frage …")
 
     # Tool-Loop: bis zu MAX_TOOL_ITERATIONEN
     for iteration in range(MAX_TOOL_ITERATIONEN + 1):
@@ -107,6 +116,22 @@ def stream_chat(
 
         # Fall A: LLM will Werkzeuge aufrufen
         if tool_calls and not is_last:
+            # P2 Phantom-Guard: nur Calls mit bekanntem Werkzeugnamen zulassen.
+            gueltige_calls = [
+                tc for tc in tool_calls
+                if (tc.get("function") or {}).get("name") in GUELTIGE_TOOLS
+            ]
+            if not gueltige_calls:
+                # Alle angeforderten Werkzeuge sind unbekannt (halluzinierte Namen).
+                # Keine Iteration verbrennen: direkt finale Text-Antwort streamen.
+                logger.warning(
+                    "Phantom-Tool-Calls verworfen: %s",
+                    [(tc.get("function") or {}).get("name") for tc in tool_calls],
+                )
+                yield from _finale_antwort_streamen(messages)
+                return
+            tool_calls = gueltige_calls  # Phantome neben gueltigen Calls ignorieren
+
             # Frontend ueber geplante Tool-Calls informieren
             yield _sse(
                 "meta",
@@ -155,6 +180,8 @@ def stream_chat(
                 )
 
             yield _sse("meta", tool_results=tool_results_compact)
+            # P3: zweite Wartephase (finale Antwort-Generierung) ankuendigen.
+            yield _sse("status", content="Werte die Ergebnisse aus und formuliere die Antwort …")
             # Naechste Iteration: LLM bekommt Tool-Ergebnisse, generiert Antwort
             continue
 
@@ -172,35 +199,7 @@ def stream_chat(
             return
 
         # Kein Content + keine Tool-Calls: separater Streaming-Call zwingt finale Antwort
-        try:
-            payload_stream = {
-                "model": MODEL_NAME,
-                "messages": messages,
-                "temperature": 0.2,
-                "max_tokens": 1024,
-                "stream": True,
-            }
-            with httpx.Client(timeout=TIMEOUT_SEC) as client:
-                with client.stream("POST", LITELLM_URL, json=payload_stream) as r:
-                    r.raise_for_status()
-                    for line in r.iter_lines():
-                        if not line or not line.startswith("data: "):
-                            continue
-                        chunk_raw = line[6:].strip()
-                        if chunk_raw == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(chunk_raw)
-                        except json.JSONDecodeError:
-                            continue
-                        delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
-                        tok = delta.get("content")
-                        if tok:
-                            yield _sse("token", content=tok)
-        except Exception as e:
-            logger.exception("LiteLLM-Stream-Fehler")
-            yield _sse("error", content=f"Stream-Fehler: {str(e)[:200]}")
-        yield "data: [DONE]\n\n"
+        yield from _finale_antwort_streamen(messages)
         return
 
     # Sollte nicht erreicht werden — Sicherheits-Fallback
@@ -209,6 +208,43 @@ def stream_chat(
 
 
 # -------- Hilfsfunktionen -------------------------------------------------
+
+
+def _finale_antwort_streamen(messages: list[dict]) -> Generator[str, None, None]:
+    """Erzwingt eine finale, textuelle Antwort via Streaming-Call (ohne Tools).
+
+    Genutzt sowohl regulaer (letzte Iteration) als auch vom Phantom-Guard,
+    wenn alle angeforderten Werkzeuge unbekannt sind.
+    """
+    payload_stream = {
+        "model": MODEL_NAME,
+        "messages": messages,
+        "temperature": 0.2,
+        "max_tokens": 1024,
+        "stream": True,
+    }
+    try:
+        with httpx.Client(timeout=TIMEOUT_SEC) as client:
+            with client.stream("POST", LITELLM_URL, json=payload_stream) as r:
+                r.raise_for_status()
+                for line in r.iter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    chunk_raw = line[6:].strip()
+                    if chunk_raw == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(chunk_raw)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
+                    tok = delta.get("content")
+                    if tok:
+                        yield _sse("token", content=tok)
+    except Exception as e:
+        logger.exception("LiteLLM-Stream-Fehler")
+        yield _sse("error", content=f"Stream-Fehler: {str(e)[:200]}")
+    yield "data: [DONE]\n\n"
 
 
 def _chunks(text: str, n: int = 12) -> Iterator[str]:
