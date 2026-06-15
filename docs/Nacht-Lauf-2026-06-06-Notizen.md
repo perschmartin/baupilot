@@ -37,3 +37,18 @@ Ohne konkrete Angabe (welcher Tab/Bereich/Button-Text) ist der duplizierte Butto
 - Chatbot braucht Host-Ollama auf GPU (`ollama ps` → 100% GPU; sonst `ollama serve`).
 
 *Nacht-Lauf 06.06.2026 — A/B erledigt, C2 vorbereitet (kein Deploy), C1/C3 bewusst gestoppt mit Notiz.*
+
+---
+
+## Update 2026-06-15 (Folge-Session) — C2 DEPLOYT + gepusht
+
+- **C2 nginx-Resolver-Fix ist live.** Befund vor Deploy: 502 war **nicht aktiv** (Login = HTTP 200). Bug war **latent**: laufendes Frontend-Image vom **03-06** < Fix-Commit vom **06-06**, aber `api`+`frontend` liefen synchron seit **09-06** → die beim nginx-Start gecachte api-IP war noch gültig. Deploy = **preventive Härtung** gegen den nächsten api-Recreate.
+- **Wichtige Korrektur zum 06-06-Rezept:** Die `nginx.conf` ist via `COPY` **ins Image gebacken** (kein Volume-Mount) → ein bloßes Recreate übernimmt sie NICHT; es braucht ein **Rebuild**.
+- **Durchgeführt (scoped, sicher):**
+  1. `docker compose -f docker-compose.services.yaml --env-file .env build frontend`
+  2. `docker run --rm spark-baupilot-frontend nginx -t` → *test is successful*
+  3. `docker compose … up -d --no-deps --force-recreate frontend` (KEIN `--remove-orphans`; Orphan-Warnung zu postgres/minio/qdrant ist erwartet — die stammen aus `docker-compose.yaml`).
+  - **Verifiziert:** Container frisch, `/health` + `POST /api/v1/auth/login` über Frontend-nginx (:8091) = **HTTP 200**.
+- **Push:** `430a6b6` + `fe52cf0` als Fast-Forward nach `origin/main` (`ab9a507..fe52cf0`); `origin/main == main`.
+
+*Update 2026-06-15 10:48 — C2 deployt+verifiziert, 2 Commits gepusht (M. Persch / Claude Code).*
