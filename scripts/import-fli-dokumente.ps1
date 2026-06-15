@@ -8,10 +8,24 @@ param(
     [string]$BasePfad = "P:\Datenübergabe FLI",
     [string]$ApiUrl = "http://localhost:8110/api/v1",
     [string]$Email = "admin@baupilot.de",
-    [string]$Passwort = "BauPilot-Erststart-2026!",
+    [string]$Passwort = $env:BAUPILOT_ADMIN_INITIAL_PW,
     [string]$Projekt = "FLI",
     [switch]$DryRun
 )
+
+# --- Admin-PW aufloesen (KEIN Klartext im Skript — Repo ist public) ---
+# Reihenfolge: -Passwort > $env:BAUPILOT_ADMIN_INITIAL_PW > .env (gitignored).
+if (-not $Passwort) {
+    $envDatei = Join-Path $PSScriptRoot "..\.env"
+    if (Test-Path $envDatei) {
+        $treffer = Select-String -Path $envDatei -Pattern '^\s*BAUPILOT_ADMIN_INITIAL_PW\s*=\s*(.+)$' | Select-Object -First 1
+        if ($treffer) { $Passwort = $treffer.Matches[0].Groups[1].Value.Trim() }
+    }
+}
+if (-not $Passwort) {
+    Write-Error "Admin-PW fehlt: `$env:BAUPILOT_ADMIN_INITIAL_PW setzen, -Passwort uebergeben, oder BAUPILOT_ADMIN_INITIAL_PW in .env pflegen."
+    exit 1
+}
 
 Write-Host "=== BauPilot MK/NTV-Import ===" -ForegroundColor Cyan
 if ($DryRun) { Write-Host "DRY RUN - Keine Aenderungen" -ForegroundColor Yellow }

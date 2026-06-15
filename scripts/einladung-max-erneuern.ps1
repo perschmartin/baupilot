@@ -4,13 +4,24 @@
 
 $ErrorActionPreference = "Stop"
 
+# --- Admin-PW aufloesen (KEIN Klartext im Skript — Repo ist public) ---
+$adminPw = $env:BAUPILOT_ADMIN_INITIAL_PW
+if (-not $adminPw) {
+    $envDatei = Join-Path $PSScriptRoot "..\.env"
+    if (Test-Path $envDatei) {
+        $treffer = Select-String -Path $envDatei -Pattern '^\s*BAUPILOT_ADMIN_INITIAL_PW\s*=\s*(.+)$' | Select-Object -First 1
+        if ($treffer) { $adminPw = $treffer.Matches[0].Groups[1].Value.Trim() }
+    }
+}
+if (-not $adminPw) { Write-Error "Admin-PW fehlt (`$env:BAUPILOT_ADMIN_INITIAL_PW oder .env)."; exit 1 }
+
 Write-Host "=== Max-Einladung erneuern ===" -ForegroundColor Cyan
 
 # 1. Login
 Write-Host "1. Admin-Login..." -ForegroundColor Yellow
 $loginBody = @{
     email = "admin@baupilot.de"
-    passwort = "BauPilot-Erststart-2026!"
+    passwort = $adminPw
 } | ConvertTo-Json
 
 $login = Invoke-RestMethod -Uri "http://localhost:8110/api/v1/auth/login" `

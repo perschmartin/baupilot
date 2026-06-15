@@ -14,6 +14,15 @@ Set-StrictMode -Version Latest
 $Root = "C:\SPARK\spark-baupilot"
 $ZipPath = "$env:USERPROFILE\Downloads\baupilot-auth-ap11.zip"
 
+# --- Admin-Initial-PW aufloesen (KEIN Klartext im Skript — Repo ist public) ---
+# Reihenfolge: $env:BAUPILOT_ADMIN_INITIAL_PW > bestehende .env > zufaellig generiert.
+$adminPw = $env:BAUPILOT_ADMIN_INITIAL_PW
+if (-not $adminPw -and (Test-Path (Join-Path $Root ".env"))) {
+    $treffer = Select-String -Path (Join-Path $Root ".env") -Pattern '^\s*BAUPILOT_ADMIN_INITIAL_PW\s*=\s*(.+)$' | Select-Object -First 1
+    if ($treffer) { $adminPw = $treffer.Matches[0].Groups[1].Value.Trim() }
+}
+if (-not $adminPw) { $adminPw = "BP-" + (python -c "import secrets; print(secrets.token_urlsafe(18))") }
+
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "  BauPilot AP 1.1 — Auth Deployment" -ForegroundColor Cyan
 Write-Host "========================================`n" -ForegroundColor Cyan
@@ -58,7 +67,7 @@ BAUPILOT_PASSWORT_MIN_LAENGE=12
 BAUPILOT_ADMIN_EMAIL=admin@tlbv.de
 BAUPILOT_ADMIN_VORNAME=Admin
 BAUPILOT_ADMIN_NACHNAME=BauPilot
-BAUPILOT_ADMIN_INITIAL_PW=BauPilot-Erststart-2026!
+BAUPILOT_ADMIN_INITIAL_PW=$adminPw
 "@
 
     Add-Content -Path $envFile -Value $authBlock -Encoding utf8NoBOM -NoNewline:$false
@@ -161,7 +170,7 @@ Write-Host "`n[9/9] Rauchtest..." -ForegroundColor Yellow
 try {
     $loginBody = @{
         email    = "admin@tlbv.de"
-        passwort = "BauPilot-Erststart-2026!"
+        passwort = $adminPw
     } | ConvertTo-Json
 
     $login = Invoke-RestMethod -Uri "http://localhost:8110/api/v1/auth/login" `
