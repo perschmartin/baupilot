@@ -15,24 +15,24 @@
 param(
     [string]$BasePfad = "P:\Datenübergabe FLI",
     [string]$ApiUrl = "http://localhost:8110/api/v1",
-    [string]$Email = "admin@baupilot.de",
-    [string]$Passwort = $env:BAUPILOT_ADMIN_INITIAL_PW,
+    [string]$Email = "svc-automation@baupilot.de",
+    [string]$Passwort = $env:BAUPILOT_SVC_PW,
     [string]$Projekt = "FLI",
     [string]$OnlyTyp = "",   # BED | BehA | MA-P | MA-A — leer = alle
     [switch]$DryRun
 )
 
 # --- Admin-PW aufloesen (KEIN Klartext im Skript — Repo ist public) ---
-# Reihenfolge: -Passwort > $env:BAUPILOT_ADMIN_INITIAL_PW > .env (gitignored).
+# Reihenfolge: -Passwort > $env:BAUPILOT_SVC_PW > .env (gitignored).
 if (-not $Passwort) {
     $envDatei = Join-Path $PSScriptRoot "..\.env"
     if (Test-Path $envDatei) {
-        $treffer = Select-String -Path $envDatei -Pattern '^\s*BAUPILOT_ADMIN_INITIAL_PW\s*=\s*(.+)$' | Select-Object -First 1
+        $treffer = Select-String -Path $envDatei -Pattern '^\s*BAUPILOT_SVC_PW\s*=\s*(.+)$' | Select-Object -First 1
         if ($treffer) { $Passwort = $treffer.Matches[0].Groups[1].Value.Trim() }
     }
 }
 if (-not $Passwort) {
-    Write-Error "Admin-PW fehlt: `$env:BAUPILOT_ADMIN_INITIAL_PW setzen, -Passwort uebergeben, oder BAUPILOT_ADMIN_INITIAL_PW in .env pflegen."
+    Write-Error "Admin-PW fehlt: `$env:BAUPILOT_SVC_PW setzen, -Passwort uebergeben, oder BAUPILOT_SVC_PW in .env pflegen."
     exit 1
 }
 

@@ -92,7 +92,7 @@ class AuthService:
         row = self.db.execute(
             text("SELECT id, email, vorname, nachname, passwort_hash, aktiv, "
                  "totp_aktiviert, totp_secret, fehlversuche, gesperrt_bis, "
-                 "muss_passwort_aendern, backup_codes "
+                 "muss_passwort_aendern, backup_codes, ist_dienstkonto "
                  "FROM shared.benutzer WHERE email = :email"),
             {"email": email},
         ).mappings().first()
@@ -123,6 +123,17 @@ class AuthService:
         import os as _os
         if _os.environ.get("BAUPILOT_DEV_SKIP_TOTP") == "1" and row["email"] == "admin@baupilot.de":
             self.db.execute(text("UPDATE shared.benutzer SET fehlversuche = 0, gesperrt_bis = NULL WHERE id = :id"), {"id": row["id"]})
+            self.db.commit()
+            return self._login_erfolg(row, mandant_slug, ip_adresse, user_agent)
+
+        # --- SERVICE-KONTO: Maschinen-Identitaet ueberspringt TOTP ---
+        # Headless-Automation kann kein interaktives 2FA; Menschen-Konten
+        # bleiben ueber die TOTP-Pflicht unten geschuetzt. Prinzipienbasierter
+        # Ersatz fuer den Dev-Bypass oben (dieser wird nach der Migration entfernt).
+        if row["ist_dienstkonto"]:
+            self.db.execute(
+                text("UPDATE shared.benutzer SET fehlversuche = 0, gesperrt_bis = NULL WHERE id = :id"),
+                {"id": row["id"]})
             self.db.commit()
             return self._login_erfolg(row, mandant_slug, ip_adresse, user_agent)
 
